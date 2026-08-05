@@ -50,9 +50,24 @@ class MongoDBConnection:
             return "mongodb://localhost:27017/virus_prediction"  # Default fallback
     
     def connect(self):
-        """Establish connection to MongoDB"""
+        """Establish connection to MongoDB.
+
+        Returns True when `self.database` is usable afterwards.
+
+        Previously a failed ping left `self.client` assigned, so the
+        `if not self.client` guard short-circuited on every subsequent call
+        and the method fell off the end returning None — permanently. One
+        transient Atlas timeout at start-up meant the app never reconnected
+        for the lifetime of the container. The client is now torn down on
+        failure, and an already-connected instance returns True instead of
+        None.
+        """
+        # Already connected — nothing to do.
+        if self.client is not None and self.database is not None:
+            return True
+
         try:
-            if not self.client:
+            if self.client is None:
                 self.client = MongoClient(
                     self.connection_string,
                     serverSelectionTimeoutMS=5000,  # 5 seconds timeout
@@ -60,42 +75,50 @@ class MongoDBConnection:
                     maxPoolSize=10,                 # Maximum connection pool size
                     retryWrites=True
                 )
-                
-                # Test the connection
-                self.client.admin.command('ping')
-                
-                # Get database name from connection string or use default
-                db_name = os.getenv('MONGODB_DATABASE', 'virus_prediction')
-                self.database = self.client[db_name]
-                
-                logger.info("Successfully connected to MongoDB")
-                return True
-                
+
+            # Test the connection
+            self.client.admin.command('ping')
+
+            # Get database name from connection string or use default
+            db_name = os.getenv('MONGODB_DATABASE', 'virus_prediction')
+            self.database = self.client[db_name]
+
+            logger.info("Successfully connected to MongoDB")
+            return True
+
         except (ConnectionFailure, ServerSelectionTimeoutError) as e:
             logger.error(f"Failed to connect to MongoDB: {e}")
+            self._discard_client()
             return False
         except Exception as e:
             logger.error(f"Unexpected error connecting to MongoDB: {e}")
+            self._discard_client()
             return False
+
+    def _discard_client(self):
+        """Drop a half-open client so the next connect() genuinely retries."""
+        try:
+            if self.client is not None:
+                self.client.close()
+        except Exception:
+            pass
+        finally:
+            self.client = None
+            self.database = None
     
     def disconnect(self):
         """Close MongoDB connection"""
         try:
             if self.client:
-                self.client.close()
-                self.client = None
-                self.database = None
+                self._discard_client()
                 logger.info("MongoDB connection closed")
         except Exception as e:
             logger.error(f"Error closing MongoDB connection: {e}")
-    
+
     def get_database(self):
-        """Get database instance"""
-        if not self.database:
-            if self.connect():
-                return self.database
-            else:
-                return None
+        """Get database instance, connecting (or reconnecting) if needed."""
+        if self.database is None:
+            self.connect()
         return self.database
     
     def test_connection(self):

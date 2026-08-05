@@ -73,6 +73,7 @@ Security notes
 import base64
 import hashlib
 import hmac
+import html
 import os
 import re
 import secrets as pysecrets
@@ -215,6 +216,12 @@ def _set_session(email: str, name: str, role: str, login_method: str):
     st.session_state.pop(AUTH_THROTTLE_KEY, None)
 
 
+def current_user_email() -> str:
+    """Email of the signed-in visitor, or '' when not signed in. Used to stamp
+    an audit trail (who edited/deleted a record) onto clinical data."""
+    return (_session() or {}).get("email", "")
+
+
 def get_current_role() -> str:
     """Role of the signed-in visitor ('user' when unknown -- fail closed)."""
     sess = _session()
@@ -350,6 +357,22 @@ def _start_password_reset(email: str):
             "attempts": 0,
             "last_sent": time.time(),
         }
+    else:
+        # No account for this email. The cooldown must still be armed:
+        # previously state was only stored for real accounts, so a second
+        # request within 60s answered "please wait 60s" for a registered email
+        # but repeated the generic success for an unregistered one — turning
+        # the identical first response into a reliable account-existence
+        # oracle on the second try. Park a code-less marker so the throttle
+        # behaves identically for both cases.
+        st.session_state[AUTH_RESET_KEY] = {
+            "email": email,
+            "user_id": None,
+            "code_hash": None,
+            "expires_at": time.time() + _OTP_TTL_SECONDS,
+            "attempts": 0,
+            "last_sent": time.time(),
+        }
     return True, generic
 
 
@@ -363,6 +386,12 @@ def _complete_password_reset(email: str, code: str, new_password: str):
     if state["attempts"] >= _OTP_MAX_ATTEMPTS:
         st.session_state.pop(AUTH_RESET_KEY, None)
         return False, "Too many incorrect codes. Please request a new one."
+    # No code_hash means the request was for an email with no account (see
+    # _start_password_reset). Consume an attempt and answer exactly as a wrong
+    # code would, so this path stays indistinguishable from a real one.
+    if not state.get("code_hash") or not state.get("user_id"):
+        state["attempts"] += 1
+        return False, "Incorrect code. Please check the email and try again."
     if not hmac.compare_digest(_hash_code(code.strip()), state["code_hash"]):
         state["attempts"] += 1
         return False, "Incorrect code. Please check the email and try again."
@@ -900,13 +929,23 @@ def render_sign_out_control():
     role = get_current_role()
     badge = "🛡️ Admin" if role == "admin" else "👤 User"
 
+    # The display name and email come from user-supplied sign-up input (or from
+    # the Google/Clerk profile), and this block is rendered with
+    # unsafe_allow_html. Without escaping, a first name of
+    # `"><img src=x onerror=...>` is injected verbatim into the page as live
+    # markup. html.escape (quote=True) neutralises it, including inside the
+    # title="" attribute.
+    safe_email = html.escape(sess.get("email") or "", quote=True)
+    safe_label = html.escape(
+        sess.get("name") or sess.get("email") or "Signed in", quote=True)
+
     st.sidebar.markdown("---")
     st.sidebar.markdown(
         f"<div style='display:flex;align-items:center;justify-content:space-between;"
         f"gap:0.5rem;padding:0.15rem 0.1rem;'>"
         f"<span style='font-size:0.85rem;overflow:hidden;text-overflow:ellipsis;"
-        f"white-space:nowrap;' title='{sess.get('email', '')}'>"
-        f"{sess.get('name') or sess.get('email') or 'Signed in'}</span>"
+        f"white-space:nowrap;' title='{safe_email}'>"
+        f"{safe_label}</span>"
         f"<span style='font-size:0.72rem;font-weight:600;padding:2px 8px;"
         f"border-radius:10px;white-space:nowrap;"
         f"background:{'#e8f1fd' if role == 'admin' else '#eef2f6'};"
