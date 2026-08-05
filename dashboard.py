@@ -19,14 +19,25 @@ import pandas as pd
 import streamlit as st
 
 from data_handler import (
+    RECORD_FETCH_LIMIT,
+    database_available,
     get_dashboard_metrics,
     get_records,
     get_record,
+    records_were_truncated,
+    to_ist,
     update_patient_record_in_db,
     soft_delete_record_in_db,
     save_doctor_lab_data_to_db,
     SYMPTOM_LABELS,
     symptom_column_name,
+)
+
+# Shared field rules — identical to the intake form, so an edit can never
+# produce a record the Prediction page would have refused to create.
+from validation import (
+    MAX_MRD_LEN, MAX_NAME_LEN, MOBILE_DIGITS,
+    clean_text, csv_safe, validate_ddmmyyyy, validate_patient_identity,
 )
 
 # Virus options for the Doctor-Recommendation / Lab multiselects. model_handler
@@ -77,11 +88,28 @@ def _is_completed(rec):
     return bool(rec.get('doctor_lab_submitted_at'))
 
 
+def _actor_email():
+    """Email of the signed-in user, recorded on edits/deletes/DR saves so the
+    record carries an audit trail of who last changed it."""
+    try:
+        from auth import current_user_email
+        return current_user_email()
+    except Exception:
+        return ""
+
+
 def _parse_ddmmyyyy(value):
     try:
         return datetime.strptime(str(value), "%d-%m-%Y").date()
     except Exception:
         return None
+
+
+def _fmt_timestamp(value):
+    """Stored UTC timestamp shown in IST — the timezone the users are in."""
+    if not isinstance(value, datetime):
+        return value
+    return to_ist(value).strftime("%d-%m-%Y %H:%M")
 
 
 def _set_nav(page_name):
@@ -181,10 +209,23 @@ def render_view_records_page():
 
     records = get_records()
     if not records:
+        if not database_available():
+            st.error("⚠️ The records database is currently unreachable. "
+                     "Please retry in a moment or contact your administrator.")
+            return
         st.info("No patient records yet. Click **New Case** to enrol the first patient.")
         st.button("➕ New Case", type="primary", on_click=_set_nav, args=("Prediction",),
                   key="view_new_case_empty")
         return
+
+    # Never let an export look complete when it isn't.
+    if records_were_truncated():
+        st.warning(
+            f"⚠️ Showing only the most recent {RECORD_FETCH_LIMIT:,} records — "
+            "there are more in the database, and downloads from this page will "
+            "not include them. Please contact your administrator before using "
+            "this export as the complete data set."
+        )
 
     _render_records_workspace(records)
 
@@ -370,77 +411,185 @@ def _build_grid_df(recs, start_index):
     ])
 
 
-def _selected_symptoms(rec):
+def _selected_symptoms(rec, blank="—"):
     """Comma-separated list of the symptoms marked present on a record. Reads
     the stored per-symptom 'Yes'/'No' flags (symptom_<snake_case>) using the
-    shared SYMPTOM_LABELS, so the label text matches the rest of the app."""
+    shared SYMPTOM_LABELS, so the label text matches the rest of the app.
+
+    ``blank`` is the placeholder for "no symptoms recorded": an em-dash on
+    screen, but an empty cell in the CSV export."""
     picked = [
         label for _key, label in SYMPTOM_LABELS
         if str(rec.get(symptom_column_name(label), "")).strip().lower() == "yes"
     ]
-    return ", ".join(picked) if picked else "—"
+    return ", ".join(picked) if picked else blank
+
+
+# Maximum pathogens a doctor may recommend (matches the multiselect below).
+MAX_DR_PATHOGENS = 5
+
+
+def _recommended_pathogens(rec):
+    """The doctor's recommended pathogens for a record, **in the order they
+    were selected**.
+
+    Reads the ordered ``doctor_recommended_viruses`` list first. Records saved
+    before that field was populated only carry the joined ``confirmed_pathogen``
+    string, so fall back to splitting it — order is preserved either way.
+    """
+    ordered = rec.get('doctor_recommended_viruses')
+    if isinstance(ordered, list) and ordered:
+        return [str(p).strip() for p in ordered if str(p).strip()]
+    raw = rec.get('confirmed_pathogen') or ""
+    return [p.strip() for p in str(raw).split(",") if p.strip()]
+
+
+def _export_value(value, blank=""):
+    """Normalise one stored value for the CSV.
+
+    Blank rather than the on-screen em-dash: "—" is a *display* placeholder,
+    and writing it into a data file turns every empty cell into a non-numeric
+    string that breaks sorting, averaging and import into SPSS/R/Stata.
+    """
+    if value is None or value == "" or value == []:
+        return blank
+    if isinstance(value, list):
+        return ", ".join(str(v) for v in value)
+    if isinstance(value, datetime):
+        return to_ist(value).strftime("%d-%m-%Y %H:%M")
+    return value
 
 
 def _build_export_df(recs):
-    """CSV-export rows (one row per patient): ICMR-specified column order plus
-    the doctor's recommended pathogen(s) and case status, and the Top 5
-    predicted viruses with their probabilities. All values are already stored
-    on each record (including 'confirmed_pathogen' and the top_N_* fields), so
-    this only formats existing data — no recompute, no model access."""
-    rows = []
-    for r in recs:
-        row = {
-            "Date of Collection": r.get('date_of_collection') or "—",
-            "Patient MRD ID": r.get('patient_mrd_id') or "—",
-            "Hospital": r.get('hospital') or "—",
-            "Patient Study ID": r.get('patient_study_id') or "—",
-            "Department": r.get('department') or "—",
-            "Date of Admission": r.get('date_of_admission') or "—",
-            "Patient Name": _patient_name(r) or "—",
-            "Address": r.get('address_line') or r.get('address') or "—",
-            "State": r.get('state_name') or "—",
-            "District": r.get('district_name') or "—",
-            "Subdistrict": r.get('subdistrict') or "—",
-            "Pin Code": r.get('pin_code') or "—",
-            "Mobile No": r.get('mobile_no') or "—",
-            "Lab ID": r.get('lab_id') or "",
-            # Doctor's recommended pathogen(s) — entered in the Update Doctor
-            # Recommendation form once the case is completed (stored comma-
-            # separated in 'confirmed_pathogen'). Empty while the case is
-            # still pending.
-            "Doctor Recommended Pathogen": r.get('confirmed_pathogen') or "—",
-            "Status": "Completed" if _is_completed(r) else "Pending",
-            "Age": r.get('age') if r.get('age') not in (None, "") else "—",
-            "Sex": r.get('sex') or "—",
-            "Patient Type": r.get('patient_type') or "—",
-            "Syndrome": r.get('syndrome_name') or "—",
-            "Selected Symptoms": _selected_symptoms(r),
-            "Onset of Illness": r.get('onset_of_illness') or "—",
-            "Duration of Illness (days)": r.get('duration_of_illness_days')
-                if r.get('duration_of_illness_days') not in (None, "") else "—",
-        }
-        
-        # Top 5 predictions, ranked, with probability percentages.
-        for n in range(1, 6):
-            conf = r.get(f'top_{n}_confidence')
-            try:
-                conf_str = f"{float(conf):.2f}" if conf not in (None, "") else "—"
-            except (TypeError, ValueError):
-                conf_str = "—"
-            row[f"Top {n} Virus"] = r.get(f'top_{n}_virus') or "—"
-            row[f"Top {n} Probability (%)"] = conf_str
-        rows.append(row)
+    """One row per patient, in a fixed, grouped, ICMR-facing column order.
 
-    cols = ["Date of Collection", "Patient MRD ID", "Hospital", "Patient Study ID",
-            "Department", "Date of Admission", "Patient Name",
-            "Address", "State", "District", "Subdistrict", "Pin Code",
-            "Mobile No", "Lab ID", "Doctor Recommended Pathogen", "Status",
-            "Age", "Sex", "Patient Type",
-            "Syndrome", "Selected Symptoms",
-            "Onset of Illness", "Duration of Illness (days)"]
+    Column groups, left to right:
+      1. Case identifiers      — S. No., Patient ID, Study ID, MRD ID
+      2. Admission & site      — collection/admission dates, hospital, department
+      3. Patient               — name, age, sex, type, mobile
+      4. Address               — address line, subdistrict, district, state, pin
+      5. Clinical              — syndrome, onset, duration, month, symptoms
+                                 (a readable summary, then one Yes/No column
+                                 per symptom in the canonical ICMR order)
+      6. Model prediction      — predicted virus + Top 1-5 with probabilities
+      7. Doctor recommendation — status, lab ID, count, then the recommended
+                                 pathogens as ordered columns 1..5
+      8. Record metadata       — enrolled/updated timestamps (IST)
+
+    Every value is already stored on the record; this only orders and formats
+    it. No recompute, no model access.
+
+    All text cells pass through ``csv_safe`` so a free-text field beginning
+    with ``=``/``+``/``-``/``@`` cannot execute as a formula when the exported
+    file is opened in Excel or LibreOffice.
+    """
+    rows = []
+    for position, r in enumerate(recs, start=1):
+        pathogens = _recommended_pathogens(r)
+        completed = _is_completed(r)
+
+        row = {
+            # 1. Case identifiers
+            "S. No.": position,
+            "Patient ID": _export_value(r.get('patient_id')),
+            "Patient Study ID": _export_value(r.get('patient_study_id')),
+            "Patient MRD ID": _export_value(r.get('patient_mrd_id')),
+
+            # 2. Admission & study site (ICMR intake-form order)
+            "Date of Collection": _export_value(r.get('date_of_collection')),
+            "Hospital": _export_value(r.get('hospital')),
+            "Department": _export_value(r.get('department')),
+            "Department (if Other)": _export_value(r.get('department_specification')),
+            "Date of Admission": _export_value(r.get('date_of_admission')),
+
+            # 3. Patient
+            "Patient Name": _export_value(_patient_name(r)),
+            "Age": _export_value(r.get('age')),
+            "Sex": _export_value(r.get('sex')),
+            "Patient Type": _export_value(r.get('patient_type')),
+            "Mobile No": _export_value(r.get('mobile_no')),
+
+            # 4. Address
+            "Address": _export_value(r.get('address_line') or r.get('address')),
+            "Subdistrict": _export_value(r.get('subdistrict')),
+            "District": _export_value(r.get('district_name')),
+            "State": _export_value(r.get('state_name')),
+            "Pin Code": _export_value(r.get('pin_code')),
+
+            # 5. Clinical
+            "Syndrome": _export_value(r.get('syndrome_name')),
+            "Onset of Illness": _export_value(r.get('onset_of_illness')),
+            "Duration of Illness (days)": _export_value(r.get('duration_of_illness_days')),
+            "Month of Illness": _export_value(r.get('month_name')),
+            "Selected Symptoms": _selected_symptoms(r, blank=""),
+        }
+
+        # One Yes/No column per symptom, in the canonical ICMR order, so the
+        # export is directly analysable instead of needing the combined string
+        # to be split by hand.
+        for _key, label in SYMPTOM_LABELS:
+            stored = str(r.get(symptom_column_name(label), "")).strip().lower()
+            row[f"Symptom: {label}"] = "Yes" if stored == "yes" else "No"
+
+        # 6. Model prediction
+        row["Predicted Virus"] = _export_value(r.get('predicted_virus_name'))
+        row["Prediction Confidence (%)"] = _percent(r.get('prediction_confidence_percent'))
+        for n in range(1, 6):
+            row[f"Top {n} Virus"] = _export_value(r.get(f'top_{n}_virus'))
+            row[f"Top {n} Probability (%)"] = _percent(r.get(f'top_{n}_confidence'))
+
+        # 7. Doctor recommendation & laboratory.
+        # The pathogens are written to their own numbered columns in the order
+        # the doctor selected them, so each one lands in its own cell. They
+        # are empty while the case is still Pending and fill in the moment the
+        # Update DR form flips the case to Completed.
+        row["Status"] = "Completed" if completed else "Pending"
+        row["Lab ID"] = _export_value(r.get('lab_id'))
+        row["Doctor Recommended Pathogen Count"] = len(pathogens)
+        for n in range(1, MAX_DR_PATHOGENS + 1):
+            row[f"Doctor Recommended Pathogen {n}"] = (
+                pathogens[n - 1] if n <= len(pathogens) else "")
+        row["Doctor Recommendation Completed On"] = _export_value(
+            r.get('doctor_lab_submitted_at'))
+
+        # 8. Record metadata
+        row["Enrolled On"] = _export_value(r.get('prediction_timestamp'))
+        row["Last Updated"] = _export_value(r.get('last_updated'))
+
+        # Neutralise spreadsheet formula injection on every text cell.
+        rows.append({k: csv_safe(v) for k, v in row.items()})
+
+    return pd.DataFrame(rows, columns=_export_columns())
+
+
+def _export_columns():
+    """The CSV's column order — one list, so header order and row order can
+    never drift apart."""
+    cols = [
+        "S. No.", "Patient ID", "Patient Study ID", "Patient MRD ID",
+        "Date of Collection", "Hospital", "Department", "Department (if Other)",
+        "Date of Admission",
+        "Patient Name", "Age", "Sex", "Patient Type", "Mobile No",
+        "Address", "Subdistrict", "District", "State", "Pin Code",
+        "Syndrome", "Onset of Illness", "Duration of Illness (days)",
+        "Month of Illness", "Selected Symptoms",
+    ]
+    cols += [f"Symptom: {label}" for _key, label in SYMPTOM_LABELS]
+    cols += ["Predicted Virus", "Prediction Confidence (%)"]
     for n in range(1, 6):
         cols += [f"Top {n} Virus", f"Top {n} Probability (%)"]
-    return pd.DataFrame(rows, columns=cols)
+    cols += ["Status", "Lab ID", "Doctor Recommended Pathogen Count"]
+    cols += [f"Doctor Recommended Pathogen {n}" for n in range(1, MAX_DR_PATHOGENS + 1)]
+    cols += ["Doctor Recommendation Completed On", "Enrolled On", "Last Updated"]
+    return cols
+
+
+def _percent(value):
+    """Probability as a 2-decimal number, or blank when not stored."""
+    try:
+        return round(float(value), 2) if value not in (None, "") else ""
+    except (TypeError, ValueError):
+        return ""
 
 
 def _render_pager(page, pages, total_f, start, page_count):
@@ -538,11 +687,18 @@ def _render_view_detail(rec):
 
     if completed:
         st.markdown("##### Doctor recommendation & laboratory")
-        dr = {
-            "Recommended": rec.get('doctor_recommended_viruses'), "Lab ID": rec.get('lab_id'),
-            "Test Performed": rec.get('test_performed'), "Laboratory Results": rec.get('laboratory_results'),
-            "Doctor Recommended Pathogen": rec.get('confirmed_pathogen'), "Date of Report": rec.get('date_of_report'),
-        }
+        # Numbered so the on-screen view matches the CSV's numbered columns
+        # and the doctor's selection order is visible.
+        pathogens = _recommended_pathogens(rec)
+        dr = {"Lab ID": rec.get('lab_id')}
+        for n, pathogen in enumerate(pathogens, start=1):
+            dr[f"Doctor Recommended Pathogen {n}"] = pathogen
+        if not pathogens:
+            dr["Doctor Recommended Pathogen"] = None
+        dr["Test Performed"] = rec.get('test_performed')
+        dr["Laboratory Results"] = rec.get('laboratory_results')
+        dr["Date of Report"] = rec.get('date_of_report')
+        dr["Completed On"] = _fmt_timestamp(rec.get('doctor_lab_submitted_at'))
         st.table({"Field": list(dr.keys()), "Value": [_fmt(v) for v in dr.values()]})
 
 
@@ -560,8 +716,12 @@ def _render_edit_form(rec):
         c1, c2 = st.columns(2)
         with c1:
             pid_no = st.text_input("Patient ID No.", value=rec.get('patient_id_no') or "")
-            patient_name = st.text_input("Patient Name", value=_patient_name(rec) or "")
-            mrd_id = st.text_input("Patient MRD ID", value=rec.get('patient_mrd_id') or "")
+            patient_name = st.text_input(
+                "Patient Name *", value=_patient_name(rec) or "", max_chars=MAX_NAME_LEN,
+                help="Required. Letters only — no digits or symbols.")
+            mrd_id = st.text_input(
+                "Patient MRD ID *", value=rec.get('patient_mrd_id') or "", max_chars=MAX_MRD_LEN,
+                help="Required. Hospital medical record number.")
             hospital = st.selectbox("Hospital", hosp_opts,
                                     index=hosp_opts.index(rec['hospital']) if rec.get('hospital') in hosp_opts else 0)
             dept = st.selectbox("Department", dept_opts,
@@ -574,55 +734,92 @@ def _render_edit_form(rec):
                                index=sex_opts.index(rec['sex']) if rec.get('sex') in sex_opts else 0)
             ptype = st.selectbox("Patient Type", ptype_opts,
                                  index=ptype_opts.index(rec['patient_type']) if rec.get('patient_type') in ptype_opts else 0)
-            mobile = st.text_input("Mobile No", value=rec.get('mobile_no') or "")
+            mobile = st.text_input(
+                f"Mobile No ({MOBILE_DIGITS} digits)", value=rec.get('mobile_no') or "",
+                max_chars=MOBILE_DIGITS,
+                help=f"Optional. If entered it must be exactly {MOBILE_DIGITS} "
+                     "digits — no alphabets, spaces or symbols.")
             date_coll = st.text_input("Date of Collection (DD-MM-YYYY)", value=rec.get('date_of_collection') or "")
             date_adm = st.text_input("Date of Admission (DD-MM-YYYY)", value=rec.get('date_of_admission') or "")
 
         if st.form_submit_button("💾 Save changes", type="primary", use_container_width=True):
-            fields = {
-                'patient_id_no': pid_no.strip(), 'patient_name': patient_name.strip(),
-                'patient_mrd_id': mrd_id.strip(), 'hospital': hospital, 'department': dept,
-                'department_specification': dept_spec.strip() if dept == "Other" else "",
-                'age': int(age), 'sex': sex, 'patient_type': ptype, 'mobile_no': mobile.strip(),
-                'date_of_collection': date_coll.strip(), 'date_of_admission': date_adm.strip(),
-            }
-            if update_patient_record_in_db(rec['_id'], fields):
-                _flash("✅ Record updated.")
-                _close_action()
-                st.rerun()
+            # Same rules as the intake form (validation.py). Without this an
+            # already-saved record could be edited to blank out the mandatory
+            # Name/MRD ID, or to hold a mobile number with letters in it.
+            errors = validate_patient_identity(patient_name, mrd_id, mobile)
+            errors += [e for e in (
+                validate_ddmmyyyy(date_coll, "Date of Collection"),
+                validate_ddmmyyyy(date_adm, "Date of Admission"),
+            ) if e]
+            if dept == "Other" and not dept_spec.strip():
+                errors.append("Please specify the department.")
+
+            if errors:
+                for message in errors:
+                    st.error(f"⚠️ {message}")
             else:
-                st.error("❌ Could not update the record.")
+                fields = {
+                    'patient_id_no': clean_text(pid_no), 'patient_name': clean_text(patient_name),
+                    'patient_mrd_id': clean_text(mrd_id).replace(" ", ""),
+                    'hospital': hospital, 'department': dept,
+                    'department_specification': clean_text(dept_spec) if dept == "Other" else "",
+                    'age': int(age), 'sex': sex, 'patient_type': ptype,
+                    'mobile_no': mobile.strip(),
+                    'date_of_collection': date_coll.strip(), 'date_of_admission': date_adm.strip(),
+                }
+                if update_patient_record_in_db(rec['_id'], fields, actor=_actor_email()):
+                    _flash("✅ Record updated.")
+                    _close_action()
+                    st.rerun()
+                else:
+                    st.error("❌ Could not update the record.")
 
 
 def _render_update_dr_form(rec):
     st.subheader(f"🩺 Update Doctor Recommendation — Patient {_identifier(rec)}")
     pathogen_options = DR_SUSPECTED_PATHOGENS
-    # The value is stored in the same 'confirmed_pathogen' field as before, now
-    # as a comma-separated list of up to 5 pathogens. Parse any existing value
-    # (a single pathogen from older records, or a comma-separated list) back
-    # into the multiselect's default, keeping only names still in the list.
-    raw_current = rec.get('confirmed_pathogen') or ""
+    # Prefer the stored ordered list; fall back to parsing the legacy
+    # comma-separated 'confirmed_pathogen' string for records saved before the
+    # list field was populated. Either way, keep only names still on the ICMR
+    # list so a pathogen removed from DR_Pathogen_List.csv can't break the form.
     current_selection = [
-        p.strip() for p in raw_current.split(",") if p.strip() in pathogen_options
+        p for p in (rec.get('doctor_recommended_viruses') or [])
+        if p in pathogen_options
     ]
+    if not current_selection:
+        raw_current = rec.get('confirmed_pathogen') or ""
+        current_selection = [
+            p.strip() for p in raw_current.split(",") if p.strip() in pathogen_options
+        ]
     with st.form(key=f"dr_form_{rec['_id']}"):
         lab_id = st.text_input("Lab ID (required to complete)", value=rec.get('lab_id') or "")
         recommended_pathogens = st.multiselect(
             "Doctor Recommended Pathogen",
             options=pathogen_options,
             default=current_selection,
-            max_selections=5,
-            help="Select up to 5 pathogens.",
+            max_selections=MAX_DR_PATHOGENS,
+            help=f"Select up to {MAX_DR_PATHOGENS} pathogens. They are exported "
+                 "to the CSV as separate numbered columns, in the order you "
+                 "select them.",
         )
 
         if st.form_submit_button("💾 Save Doctor Recommendation", type="primary", use_container_width=True):
             if not lab_id.strip():
                 st.warning("⚠️ Lab ID is required to complete this case. It stays 🔴 Pending until a Lab ID is entered.")
+            elif not recommended_pathogens:
+                st.warning("⚠️ Select at least one recommended pathogen to complete this case.")
             else:
+                # Store BOTH shapes, in the doctor's selection order:
+                #   doctor_recommended_viruses -> the ordered list, which is
+                #     what the CSV's numbered pathogen columns read;
+                #   confirmed_pathogen         -> the joined string kept for
+                #     backwards compatibility with records saved earlier.
                 payload = {
                     'prediction_id': rec['_id'],
-                    'lab_id': lab_id.strip(),
+                    'lab_id': clean_text(lab_id),
+                    'doctor_recommended_viruses': list(recommended_pathogens),
                     'confirmed_pathogen': ", ".join(recommended_pathogens),
+                    'updated_by': _actor_email(),
                 }
                 if save_doctor_lab_data_to_db(payload):
                     _flash("✅ Doctor recommendation saved — case marked completed.")
@@ -639,7 +836,7 @@ def _render_delete_confirm(rec):
                f"records list. The data is kept in the database and can be restored by an admin.")
     c1, c2 = st.columns(2)
     if c1.button("🗑️ Confirm delete", type="primary", use_container_width=True, key=f"confirm_del_{rec['_id']}"):
-        if soft_delete_record_in_db(rec['_id']):
+        if soft_delete_record_in_db(rec['_id'], actor=_actor_email()):
             _flash("🗑️ Record deleted (soft).")
             _close_action()
             st.rerun()

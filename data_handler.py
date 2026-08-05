@@ -2,7 +2,7 @@
 Data Handler Module
 Handles all database operations and data persistence
 """
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import pandas as pd
 import logging
 from database import get_db, test_db_connection
@@ -10,6 +10,35 @@ from typing import Dict, List, Optional, Any
 
 # Configure logging
 logger = logging.getLogger(__name__)
+
+# The deployment is Indian (ICMR / NIE, hospitals in Tamil Nadu), but every
+# timestamp is stored in UTC. Day boundaries therefore have to be computed in
+# IST or the "today / this week / this month" counts are wrong for every case
+# enrolled between 00:00 and 05:30 local time — those landed on the previous
+# UTC day and silently disappeared from the daily figure.
+IST = timezone(timedelta(hours=5, minutes=30))
+
+# Upper bound on records pulled into a single View Records / export request.
+# Kept high enough to cover the whole study; `get_records` reports when a
+# result set is actually truncated instead of silently dropping the tail.
+RECORD_FETCH_LIMIT = 100000
+
+
+def to_ist(value):
+    """Render a stored (naive, UTC) timestamp in IST for display/export."""
+    if not isinstance(value, datetime):
+        return value
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(IST)
+
+
+def _ist_day_start_utc(days_ago: int = 0) -> datetime:
+    """Midnight IST (today, or N days back) expressed as a naive UTC datetime,
+    ready to compare against the stored `prediction_timestamp` values."""
+    now_ist = datetime.now(IST) - timedelta(days=days_ago)
+    midnight_ist = now_ist.replace(hour=0, minute=0, second=0, microsecond=0)
+    return midnight_ist.astimezone(timezone.utc).replace(tzinfo=None)
 
 # Canonical clinical symptoms for readable/CSV output, as
 # (stored_key, human_readable_words). Keys MUST match the no-space identifiers
@@ -63,24 +92,70 @@ def symptom_column_name(label: str) -> str:
 
 class DataHandler:
     """Handles all database operations for the virus prediction app"""
-    
+
+    # Don't retry a dead database on every single Streamlit rerun.
+    _RECONNECT_COOLDOWN_SECONDS = 5
+
     def __init__(self):
-        self.db = None
+        self._database = None
+        self._indexes_ready = False
+        self._connecting = False
+        self._last_attempt = 0.0
+        self.records_truncated = False
         self._initialize_db()
-    
+
+    @property
+    def db(self):
+        """Live database handle, reconnecting on demand.
+
+        This module instantiates a single DataHandler at import time. It used
+        to latch `self.db = None` if MongoDB happened to be unreachable at that
+        moment, and nothing ever retried — so a brief Atlas hiccup during
+        container start left the deployment running with no database until
+        someone redeployed it. Every save silently returned None and the app
+        showed "Failed to enrol patient" forever.
+        """
+        if self._database is None:
+            self._initialize_db()
+        return self._database
+
+    def _db(self):
+        """Explicit accessor, equivalent to `.db` — reads better at call sites
+        that want to make the reconnect attempt obvious."""
+        return self.db
+
     def _initialize_db(self):
-        """Initialize database connection"""
+        """(Re)establish the database connection, at most once per cooldown."""
+        # `_create_indexes` reads `self.db`, which re-enters this method; the
+        # flag keeps that from recursing when the database is unavailable.
+        if self._connecting:
+            return
+        import time
+        if self._database is None and (time.time() - self._last_attempt
+                                       < self._RECONNECT_COOLDOWN_SECONDS):
+            return
+        self._connecting = True
+        self._last_attempt = time.time()
         try:
-            self.db = get_db()
-            if self.db is not None:
-                # Create indexes for better performance
-                self._create_indexes()
+            self._database = get_db()
+            if self._database is not None:
+                if not self._indexes_ready:
+                    self._create_indexes()
+                    self._indexes_ready = True
                 logger.info("DataHandler initialized successfully")
             else:
                 logger.warning("Failed to initialize database connection")
         except Exception as e:
             logger.error(f"Error initializing DataHandler: {e}")
-    
+            self._database = None
+        finally:
+            self._connecting = False
+
+    def is_available(self) -> bool:
+        """True when the database is reachable right now."""
+        return self.db is not None
+
+
     def _get_next_patient_id(self) -> str:
         """Generate auto-incrementing patient ID (P001, P002, etc.)"""
         try:
@@ -153,6 +228,17 @@ class DataHandler:
                 
             # Create indexes on frequently queried fields
             collections = {
+                # The collection the app actually reads and writes. Every
+                # dashboard count and record listing filters on `is_deleted`
+                # and sorts on `prediction_timestamp`; without these the
+                # queries were full collection scans.
+                'virus_predictions': [
+                    ('prediction_timestamp', -1),
+                    ('is_deleted', 1),
+                    ('patient_id', 1),
+                    ('patient_mrd_id', 1),
+                    ('doctor_lab_submitted_at', 1),
+                ],
                 'predictions': [
                     ('timestamp', -1),
                     ('patient_id', 1),
@@ -224,7 +310,12 @@ class DataHandler:
                 'department': patient_data.get('department', ''),
                 'department_specification': patient_data.get('department_other_specification', ''),
                 'date_of_admission': patient_data.get('date_of_admission', ''),
-                'patient_id_no': patient_data.get('patient_id_input', ''),
+                # The intake form never collects a 'patient_id_input' key, so
+                # this read always produced '' and every record was saved with
+                # an empty Patient ID No. — which is the identifier the View
+                # Records grid and CSV lead with. Fall back to the
+                # auto-assigned sequential ID so the column is never blank.
+                'patient_id_no': patient_data.get('patient_id_input') or patient_id,
                 'address_line': patient_data.get('address_line', ''),
                 'mobile_no': patient_data.get('mobile_no', ''),
 
@@ -525,20 +616,40 @@ class DataHandler:
                 logger.error(f"Invalid prediction_id format for doctor/lab data: {e}")
                 return None
 
-            recommended_viruses = doctor_lab_data.get('doctor_recommended_viruses', [])
+            # PARTIAL update: only write the fields the caller actually sent.
+            #
+            # This used to build the full field set with `.get(key, '')`
+            # defaults, so a caller that submitted just {lab_id,
+            # confirmed_pathogen} -- which is exactly what the Update DR form
+            # sends -- overwrote test_performed, sample_type,
+            # diagnostic_method, laboratory_results, date_of_sample_collection
+            # and date_of_report with empty strings, and reset
+            # doctor_recommended_viruses to []. Every DR save silently
+            # destroyed any lab data already on the record.
+            editable_fields = (
+                'doctor_recommended_viruses', 'lab_id', 'test_performed',
+                'date_of_sample_collection', 'sample_type', 'diagnostic_method',
+                'laboratory_results', 'confirmed_pathogen', 'date_of_report',
+            )
             update_fields = {
-                'doctor_recommended_viruses': recommended_viruses,
-                'doctor_recommended_count': len(recommended_viruses),
-                'lab_id': doctor_lab_data.get('lab_id', ''),
-                'test_performed': doctor_lab_data.get('test_performed', ''),
-                'date_of_sample_collection': doctor_lab_data.get('date_of_sample_collection', ''),
-                'sample_type': doctor_lab_data.get('sample_type', ''),
-                'diagnostic_method': doctor_lab_data.get('diagnostic_method', ''),
-                'laboratory_results': doctor_lab_data.get('laboratory_results', ''),
-                'confirmed_pathogen': doctor_lab_data.get('confirmed_pathogen', ''),
-                'date_of_report': doctor_lab_data.get('date_of_report', ''),
-                'doctor_lab_submitted_at': datetime.utcnow()
+                key: doctor_lab_data[key]
+                for key in editable_fields if key in doctor_lab_data
             }
+            if not update_fields:
+                logger.warning(
+                    f"No doctor/lab fields supplied for prediction ID: {prediction_id}")
+                return None
+
+            # Keep the denormalised count in step with the list whenever the
+            # list itself is being written.
+            if 'doctor_recommended_viruses' in update_fields:
+                recommended = update_fields['doctor_recommended_viruses'] or []
+                update_fields['doctor_recommended_viruses'] = list(recommended)
+                update_fields['doctor_recommended_count'] = len(recommended)
+
+            update_fields['doctor_lab_submitted_at'] = datetime.utcnow()
+            if doctor_lab_data.get('updated_by'):
+                update_fields['updated_by'] = doctor_lab_data['updated_by']
 
             result = collection.update_one(
                 {'_id': object_id},
@@ -600,9 +711,13 @@ class DataHandler:
             # Convert to DataFrame
             df = pd.DataFrame(records)
             
-            # Format timestamps for better readability
+            # Format timestamps for better readability. `.dt` raises whenever
+            # the column isn't uniformly datetime (any missing/None value
+            # makes it an object column), so coerce first.
             if 'prediction_timestamp' in df.columns:
-                df['prediction_timestamp'] = df['prediction_timestamp'].dt.strftime('%Y-%m-%d %H:%M:%S')
+                df['prediction_timestamp'] = pd.to_datetime(
+                    df['prediction_timestamp'], errors='coerce'
+                ).dt.strftime('%Y-%m-%d %H:%M:%S')
             
             # Reorder columns for better CSV structure
             column_order = [
@@ -713,18 +828,21 @@ class DataHandler:
         empty = {'enrolled': 0, 'dr_completed': 0, 'dr_pending': 0,
                  'daily': 0, 'weekly': 0, 'monthly': 0}
         try:
-            if self.db is None:
+            db = self._db()
+            if db is None:
                 return empty
-            from datetime import timedelta
-            col = self.db['virus_predictions']
+            col = db['virus_predictions']
             live = {'is_deleted': {'$ne': True}}
             enrolled = col.count_documents(live)
             completed = col.count_documents({**live, 'doctor_lab_submitted_at': {'$ne': None}})
-            now = datetime.utcnow()
-            start_today = datetime(now.year, now.month, now.day)
-            daily = col.count_documents({**live, 'prediction_timestamp': {'$gte': start_today}})
-            weekly = col.count_documents({**live, 'prediction_timestamp': {'$gte': now - timedelta(days=7)}})
-            monthly = col.count_documents({**live, 'prediction_timestamp': {'$gte': now - timedelta(days=30)}})
+            # Day boundaries in IST, not UTC — see the IST note at the top of
+            # this module. "Today" now means today in India.
+            daily = col.count_documents(
+                {**live, 'prediction_timestamp': {'$gte': _ist_day_start_utc(0)}})
+            weekly = col.count_documents(
+                {**live, 'prediction_timestamp': {'$gte': _ist_day_start_utc(6)}})
+            monthly = col.count_documents(
+                {**live, 'prediction_timestamp': {'$gte': _ist_day_start_utc(29)}})
             return {'enrolled': enrolled, 'dr_completed': completed,
                     'dr_pending': max(0, enrolled - completed),
                     'daily': daily, 'weekly': weekly, 'monthly': monthly}
@@ -732,30 +850,49 @@ class DataHandler:
             logger.error(f"Error computing dashboard metrics: {e}")
             return empty
 
-    def get_records(self, include_deleted: bool = False, limit: int = 500) -> List[Dict]:
-        """Return saved prediction records for the View page (newest first)."""
+    def get_records(self, include_deleted: bool = False,
+                    limit: int = RECORD_FETCH_LIMIT) -> List[Dict]:
+        """Return saved prediction records for the View page (newest first).
+
+        The previous default of 500 silently dropped everything past the 500th
+        record: the Dashboard counted all enrolled cases while View Records and
+        "Download All" only ever saw the newest 500, so an export looked
+        complete but wasn't. The cap is now high enough for the whole study,
+        and `records_truncated` records whether it was actually reached so the
+        UI can warn instead of quietly under-reporting.
+        """
+        self.records_truncated = False
         try:
-            if self.db is None:
+            db = self._db()
+            if db is None:
                 return []
-            col = self.db['virus_predictions']
+            col = db['virus_predictions']
             query = {} if include_deleted else {'is_deleted': {'$ne': True}}
             cursor = col.find(query).sort('prediction_timestamp', -1).limit(limit)
             records = []
             for doc in cursor:
                 doc['_id'] = str(doc['_id'])
                 records.append(doc)
+            self.records_truncated = len(records) >= limit
+            if self.records_truncated:
+                logger.warning(
+                    f"Record fetch hit the {limit}-document cap; results are truncated.")
             return records
         except Exception as e:
             logger.error(f"Error fetching records: {e}")
             return []
 
-    def get_record(self, doc_id: str) -> Optional[Dict]:
+    def get_record(self, doc_id: str, include_deleted: bool = True) -> Optional[Dict]:
         """Return a single record by its document id."""
         try:
-            if self.db is None:
+            db = self._db()
+            if db is None:
                 return None
             from bson import ObjectId
-            doc = self.db['virus_predictions'].find_one({'_id': ObjectId(doc_id)})
+            query = {'_id': ObjectId(doc_id)}
+            if not include_deleted:
+                query['is_deleted'] = {'$ne': True}
+            doc = db['virus_predictions'].find_one(query)
             if doc:
                 doc['_id'] = str(doc['_id'])
             return doc
@@ -763,33 +900,47 @@ class DataHandler:
             logger.error(f"Error fetching record {doc_id}: {e}")
             return None
 
-    def update_patient_record(self, doc_id: str, fields: Dict) -> bool:
-        """Update editable patient fields on an existing record."""
+    def update_patient_record(self, doc_id: str, fields: Dict,
+                              actor: str = "") -> bool:
+        """Update editable patient fields on an existing record.
+
+        `actor` (the signed-in user's email) is stored alongside the change so
+        the record carries an audit trail of who last edited it — an ICMR
+        validation requirement for clinical data.
+        """
         try:
-            if self.db is None:
+            db = self._db()
+            if db is None:
                 return False
             from bson import ObjectId
             fields = {k: v for k, v in (fields or {}).items() if k != '_id'}
             if not fields:
                 return False
-            result = self.db['virus_predictions'].update_one(
+            audit = {'last_updated': datetime.utcnow()}
+            if actor:
+                audit['updated_by'] = actor
+            result = db['virus_predictions'].update_one(
                 {'_id': ObjectId(doc_id)},
-                {'$set': {**fields, 'last_updated': datetime.utcnow()}}
+                {'$set': {**fields, **audit}}
             )
             return result.matched_count > 0
         except Exception as e:
             logger.error(f"Error updating record {doc_id}: {e}")
             return False
 
-    def soft_delete_record(self, doc_id: str) -> bool:
+    def soft_delete_record(self, doc_id: str, actor: str = "") -> bool:
         """Soft-delete a record (hidden from views, kept in the database)."""
         try:
-            if self.db is None:
+            db = self._db()
+            if db is None:
                 return False
             from bson import ObjectId
-            result = self.db['virus_predictions'].update_one(
+            changes = {'is_deleted': True, 'deleted_at': datetime.utcnow()}
+            if actor:
+                changes['deleted_by'] = actor
+            result = db['virus_predictions'].update_one(
                 {'_id': ObjectId(doc_id)},
-                {'$set': {'is_deleted': True, 'deleted_at': datetime.utcnow()}}
+                {'$set': changes}
             )
             return result.matched_count > 0
         except Exception as e:
@@ -837,18 +988,28 @@ def get_dashboard_metrics() -> Dict:
     """Summary counts for the Dashboard page."""
     return data_handler.get_dashboard_metrics()
 
-def get_records(include_deleted: bool = False, limit: int = 500) -> List[Dict]:
+def get_records(include_deleted: bool = False,
+                limit: int = RECORD_FETCH_LIMIT) -> List[Dict]:
     """List saved prediction records (newest first)."""
     return data_handler.get_records(include_deleted=include_deleted, limit=limit)
 
-def get_record(doc_id: str) -> Optional[Dict]:
+def records_were_truncated() -> bool:
+    """True when the last get_records() call hit the fetch cap, so the caller
+    can warn that the view/export is not the complete data set."""
+    return bool(getattr(data_handler, 'records_truncated', False))
+
+def get_record(doc_id: str, include_deleted: bool = True) -> Optional[Dict]:
     """Fetch a single record by id."""
-    return data_handler.get_record(doc_id)
+    return data_handler.get_record(doc_id, include_deleted=include_deleted)
 
-def update_patient_record_in_db(doc_id: str, fields: Dict) -> bool:
+def update_patient_record_in_db(doc_id: str, fields: Dict, actor: str = "") -> bool:
     """Update editable patient fields on a record."""
-    return data_handler.update_patient_record(doc_id, fields)
+    return data_handler.update_patient_record(doc_id, fields, actor=actor)
 
-def soft_delete_record_in_db(doc_id: str) -> bool:
+def soft_delete_record_in_db(doc_id: str, actor: str = "") -> bool:
     """Soft-delete a record."""
-    return data_handler.soft_delete_record(doc_id)
+    return data_handler.soft_delete_record(doc_id, actor=actor)
+
+def database_available() -> bool:
+    """True when MongoDB is reachable right now (retries on demand)."""
+    return data_handler.is_available()

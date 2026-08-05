@@ -4,6 +4,7 @@ Encapsulates TabularResNet model loading, feature preprocessing, and prediction 
 Uses PyTorch-based neural networks with bundled preprocessing in .pth files
 """
 
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -14,6 +15,8 @@ import torch.nn.functional as F
 import streamlit as st
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import LabelEncoder, StandardScaler
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -961,10 +964,12 @@ class VirusPredictor:
 
             return xb, xc, xcat
 
-        except Exception as e:
-            st.error(f"Preprocessing error: {e}")
-            import traceback
-            st.error(traceback.format_exc())
+        except Exception:
+            # Detail goes to the server log; the page gets a safe summary.
+            # The traceback used to be rendered into the app, exposing file
+            # paths, library versions and feature names to any visitor.
+            logger.exception("Feature preprocessing failed")
+            st.error("Could not process the entered patient details.")
             raise
 
     def predict(self, patient_data):
@@ -1042,8 +1047,9 @@ class VirusPredictor:
                 'excluded_by_syndrome': [VIRUS_MAPPING[i] for i in excluded_from_view_m1],
             }
 
-        except Exception as e:
-            st.error(f"Prediction error: {e}")
+        except Exception:
+            logger.exception("Model prediction failed")
+            st.error("The prediction could not be completed.")
             raise
 
 

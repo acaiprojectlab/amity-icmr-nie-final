@@ -1,4 +1,5 @@
 import base64
+import logging
 from io import BytesIO
 
 import streamlit as st
@@ -6,6 +7,8 @@ import streamlit.components.v1 as components
 import pandas as pd
 import numpy as np
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 # Model and prediction imports
 from model_handler import (
@@ -22,7 +25,10 @@ refresh_virus_mappings()
 # Symptom display mapping (no-space keys -> user-friendly display names)
 SYMPTOM_DISPLAY_NAMES = {
     'HEADACHE': 'Headache',
-    'IRRITABILITY': 'Irritability', 
+    # Key must match model_handler.ALL_SYMPTOMS, which spells this
+    # 'IRRITABLITY' (missing the second I). With the corrected spelling as the
+    # key the lookup missed and clinicians were shown the typo "Irritablity".
+    'IRRITABLITY': 'Irritability',
     'ALTEREDSENSORIUM': 'Altered Sensorium',
     'SOMNOLENCE': 'Somnolence',
     'NECKRIGIDITY': 'Neck Rigidity',
@@ -79,6 +85,14 @@ from auth import (
     allowed_pages, require_page_access, DEFAULT_PAGE, AUTH_STATE_KEYS,
 )
 
+# Shared field rules — the same validators guard the View Records → Edit form,
+# so a record can never be edited into a state the intake form would reject.
+from validation import (
+    MAX_MRD_LEN, MAX_NAME_LEN, MOBILE_DIGITS, PIN_DIGITS,
+    validate_mobile, validate_mrd_id, validate_patient_identity,
+    validate_patient_name, validate_pin_code,
+)
+
 
 # Page configuration - with error handling for deployment consistency
 try:
@@ -103,8 +117,9 @@ def load_mappings():
         district_map = pd.read_csv('district_encoding_map.csv')
         district_state_map = pd.read_csv('district_state_mapping.csv')
         return state_map, district_map, district_state_map
-    except Exception as e:
-        st.error(f"Error loading mapping files: {e}")
+    except Exception:
+        logger.exception("Failed to load state/district mapping CSVs")
+        st.error("Error loading mapping files. Please contact your administrator.")
         return None, None, None
 
 
@@ -578,8 +593,10 @@ def main():
                 st.error("Failed to load models. Please ensure the .pth model files are in the 'models/' directory.")
                 st.info("Expected files: `models/streamlit_virus_model_Major.pth` and `models/streamlit_virus_model_other.pth`")
                 return
-        except Exception as e:
-            st.error(f"Error initializing predictor: {e}")
+        except Exception:
+            logger.exception("Failed to initialise the virus predictor")
+            st.error("Could not initialise the prediction models. "
+                     "Please contact your administrator.")
             return
 
         state_map, district_map, district_state_map = load_mappings()
@@ -610,7 +627,12 @@ def main():
         # 6) Date of Admission, 7) Patient Name, 8) Address, 9) Mobile No.
         # Dates formatted as DD-MM-YYYY to match the requested format.
 
-        # Row 1 — collection date, patient name, MRD ID
+        # Row 1 — collection date, patient name*, MRD ID*
+        # Patient Name and Patient MRD ID are MANDATORY (ICMR validation
+        # requirement): a record cannot be predicted or enrolled without them.
+        # Each field shows its problem inline as soon as something is typed;
+        # the "required" case is reported when Predict/Enrol is clicked so the
+        # empty form doesn't come up covered in red.
         pi_r1c1, pi_r1c2, pi_r1c3 = st.columns(3)
         with pi_r1c1:
             patient_data['date_of_collection'] = st.date_input(
@@ -618,12 +640,20 @@ def main():
                 key=widget_key('date_of_collection')).strftime('%d-%m-%Y')
         with pi_r1c2:
             patient_data['patient_name'] = st.text_input(
-                "Patient Name", value="", key=widget_key('patient_name'),
-                placeholder="e.g., John Doe")
+                "Patient Name *", value="", key=widget_key('patient_name'),
+                max_chars=MAX_NAME_LEN, placeholder="e.g., John Doe",
+                help="Required. Letters only — no digits or symbols.").strip()
+            _name_err = validate_patient_name(patient_data['patient_name'])
+            if patient_data['patient_name'] and _name_err:
+                st.caption(f":red[{_name_err}]")
         with pi_r1c3:
             patient_data['patient_mrd_id'] = st.text_input(
-                "Patient MRD ID (e.g., A123456)", value="",
-                key=widget_key('patient_mrd_id'))
+                "Patient MRD ID *", value="", key=widget_key('patient_mrd_id'),
+                max_chars=MAX_MRD_LEN, placeholder="e.g., A123456",
+                help="Required. Hospital medical record number.").strip()
+            _mrd_err = validate_mrd_id(patient_data['patient_mrd_id'])
+            if patient_data['patient_mrd_id'] and _mrd_err:
+                st.caption(f":red[{_mrd_err}]")
 
         # Row 2 — hospital*, department*, and the "Other" specify box.
         # "Select..." is the default so the user must actively choose the two
@@ -659,8 +689,20 @@ def main():
             st.text_input("Patient ID No.", value="Auto-assigned on enrolment",
                           disabled=True, key=widget_key('patient_id_no'))
         with pi_r3c3:
+            # Optional field, but strictly validated when filled: exactly 10
+            # digits, no alphabets and no symbols. max_chars stops over-typing
+            # at the widget; the validator rejects (never silently strips)
+            # anything non-numeric, so a mistyped number can't be "repaired"
+            # into a different valid-looking one and saved against a patient.
             patient_data['mobile_no'] = st.text_input(
-                "Mobile No (10 digit)", value="", key=widget_key('mobile_no'))
+                f"Mobile No ({MOBILE_DIGITS} digits)", value="",
+                key=widget_key('mobile_no'), max_chars=MOBILE_DIGITS,
+                placeholder="e.g., 9876543210",
+                help=f"Optional. If entered it must be exactly {MOBILE_DIGITS} "
+                     "digits — no alphabets, spaces or symbols.").strip()
+            _mobile_err = validate_mobile(patient_data['mobile_no'])
+            if patient_data['mobile_no'] and _mobile_err:
+                st.caption(f":red[{_mobile_err}]")
 
         # Address & Location expander — State, District, Subdistrict, Pin, Address line
         with st.expander("Address & Location (expand)", expanded=False):
@@ -701,7 +743,12 @@ def main():
                     "Subdistrict", value="", key=widget_key('subdistrict'))
             with addr_c4:
                 patient_data['pin_code'] = st.text_input(
-                    "Pin Code", value="", key=widget_key('pin_code'))
+                    "Pin Code", value="", key=widget_key('pin_code'),
+                    max_chars=PIN_DIGITS, placeholder="e.g., 600001",
+                    help=f"Optional. If entered it must be exactly {PIN_DIGITS} digits.").strip()
+                _pin_err = validate_pin_code(patient_data['pin_code'])
+                if patient_data['pin_code'] and _pin_err:
+                    st.caption(f":red[{_pin_err}]")
 
         st.markdown("---")
 
@@ -729,10 +776,19 @@ def main():
                 "Onset of Illness", value=datetime.now(),
                 key=widget_key('onset_of_illness'))
             patient_data['onset_of_illness'] = onset_date.strftime('%d-%m-%Y')
-        duration_of_illness = max(0, (admission_date - onset_date).days)
+        # An admission date earlier than the onset date is a data-entry error.
+        # It used to be clamped to 0 silently, which quietly recorded a wrong
+        # duration; now it is surfaced here and blocked at Predict.
+        raw_duration_days = (admission_date - onset_date).days
+        admission_before_onset = raw_duration_days < 0
+        duration_of_illness = max(0, raw_duration_days)
         patient_data['durationofillness'] = duration_of_illness
         with pi_r5c2:
-            st.caption(f"Duration of Illness (days): {duration_of_illness}")
+            if admission_before_onset:
+                st.caption(":red[Date of Admission is earlier than Onset of Illness — "
+                           "please correct the dates.]")
+            else:
+                st.caption(f"Duration of Illness (days): {duration_of_illness}")
             # Temporal features — Month of Illness is derived automatically from the Onset date
             st.caption(f"Month of Illness: {onset_date.strftime('%B')} (auto-filled from Onset date)")
         patient_data['month'] = onset_date.month
@@ -818,16 +874,35 @@ def main():
                 missing_required.append("Hospital")
             if patient_data.get('department') in (None, "Select..."):
                 missing_required.append("Department")
+            if (patient_data.get('department') == "Other"
+                    and not patient_data.get('department_other_specification')):
+                missing_required.append("Specify Department")
             if patient_data.get('SEX') is None:
                 missing_required.append("Sex")
             if patient_data.get('PATIENTTYPE') is None:
                 missing_required.append("Patient Type")
 
+            # Mandatory patient identity (Name, MRD ID) + format rules for the
+            # optional contact fields. Checked here so the clinician fixes the
+            # record *before* seeing a prediction, and re-checked at Enrol.
+            field_errors = validate_patient_identity(
+                patient_data.get('patient_name'),
+                patient_data.get('patient_mrd_id'),
+                patient_data.get('mobile_no'),
+                patient_data.get('pin_code'),
+            )
+            if admission_before_onset:
+                field_errors.append(
+                    "Date of Admission cannot be earlier than Onset of Illness.")
+
             # Check if at least one symptom is selected
             symptoms_selected = any(patient_data.get(symptom, 0) == 1 for symptom in ALL_SYMPTOMS)
 
-            if missing_required:
-                st.warning(f"Please select {', '.join(missing_required)} before making a prediction.")
+            if missing_required or field_errors:
+                if missing_required:
+                    st.warning(f"Please select {', '.join(missing_required)} before making a prediction.")
+                for message in field_errors:
+                    st.warning(f"⚠️ {message}")
             elif not symptoms_selected:
                 st.warning("Please select at least one symptom before making a prediction.")
                 st.info("Expand the symptom groups above and check the boxes for symptoms present in the patient.")
@@ -1006,10 +1081,16 @@ def main():
                                 "Always consult with qualified healthcare professionals for proper medical diagnosis and treatment decisions."
                             )
                             
-                    except Exception as e:
-                        st.error(f"Prediction error: {e}")
-                        import traceback
-                        st.error(traceback.format_exc())
+                    except Exception:
+                        # Full traceback goes to the server log only. Printing
+                        # it into the page exposed file paths, library
+                        # versions and internal state to anyone using the app.
+                        logger.exception("Prediction failed")
+                        st.error(
+                            "Prediction could not be completed. Please check the "
+                            "entered details and try again. If the problem "
+                            "persists, contact your system administrator."
+                        )
 
         # After prediction, the patient is ENROLLED (saved as a Pending record). The
         # Doctor Recommendation & Laboratory details are completed later, in one place
@@ -1031,20 +1112,21 @@ def main():
                     pred_results = st.session_state['prediction_results']
                     patient_data_for_save = pred_results['patient_data']
 
-                    # Validate optional contact fields at save time
-                    mobile_raw = str(patient_data_for_save.get('mobile_no', '')).strip()
-                    pin_raw = str(patient_data_for_save.get('pin_code', '')).strip()
-                    invalid_fields = []
-                    if mobile_raw:
-                        mobile_digits = ''.join(ch for ch in mobile_raw if ch.isdigit())
-                        if len(mobile_digits) != 10:
-                            invalid_fields.append('Mobile No (must be 10 digits)')
-                    if pin_raw:
-                        if not pin_raw.isdigit() or len(pin_raw) != 6:
-                            invalid_fields.append('Pin Code (must be 6 digits)')
+                    # Re-validate the whole identity block against what is
+                    # about to be written. The Predict button already checked
+                    # it, but this is the call that actually persists a patient
+                    # record, so it must not rely on an earlier screen's check.
+                    invalid_fields = validate_patient_identity(
+                        patient_data_for_save.get('patient_name'),
+                        patient_data_for_save.get('patient_mrd_id'),
+                        patient_data_for_save.get('mobile_no'),
+                        patient_data_for_save.get('pin_code'),
+                    )
 
                     if invalid_fields:
-                        st.warning(f"⚠️ Patient not enrolled: {', '.join(invalid_fields)}")
+                        st.warning("⚠️ Patient not enrolled — please correct the following:")
+                        for message in invalid_fields:
+                            st.warning(f"• {message}")
                     else:
                         try:
                             # doctor_lab_data=None -> record saved as Pending (DR completed later).
@@ -1067,8 +1149,11 @@ def main():
                                 st.rerun()
                             else:
                                 st.error("❌ Failed to enrol patient. Please try again.")
-                        except Exception as enrol_error:
-                            st.error(f"❌ Enrolment error: {str(enrol_error)}")
+                        except Exception:
+                            logger.exception("Patient enrolment failed")
+                            st.error("❌ Could not enrol the patient. Please try "
+                                     "again, or contact your administrator if "
+                                     "the problem persists.")
 
             st.button(
                 "Reset All Inputs",
