@@ -1,0 +1,20 @@
+name: Keep Streamlit App Awake
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    name: Ping Streamlit app
+    runs-on: ubuntu-latest
+    steps:
+      - name: Request app URL and capture HTTP status
+        run: |
+          STATUS=$(curl -L -s -o /dev/null -w "%{http_code}" "https://amityicmrlog.streamlit.app/")
+          echo "HTTP status code: $STATUS"
+          if [ "$STATUS" != "200" ]; then
+            echo "::error::Streamlit app did not return HTTP 200 (got $STATUS)"
+            exit 1
+          fi
