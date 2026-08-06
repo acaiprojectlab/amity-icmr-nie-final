@@ -3,7 +3,6 @@ import logging
 from io import BytesIO
 
 import streamlit as st
-import streamlit.components.v1 as components
 import pandas as pd
 import numpy as np
 from datetime import datetime
@@ -226,7 +225,7 @@ def main():
             st.session_state['_scroll_to_page'] = True
             st.rerun()
 
-    components.html(
+    st.iframe(
         """
         <script>
         (function() {
@@ -320,7 +319,7 @@ def main():
         })();
         </script>
         """,
-        height=0,
+        height=1,
     )
 
     # Top logos — centred middle logo on the page's centre line (see
@@ -410,7 +409,7 @@ def main():
     # the top of the viewport instead of wherever the user was scrolled to.
     st.markdown("<div id='page-content-anchor'></div>", unsafe_allow_html=True)
     if st.session_state.pop('_scroll_to_page', False):
-        components.html(
+        st.iframe(
             """
             <script>
                 const target = window.parent.document.getElementById('page-content-anchor');
@@ -419,7 +418,7 @@ def main():
                 }
             </script>
             """,
-            height=0,
+            height=1,
         )
 
     if page == "Home":
