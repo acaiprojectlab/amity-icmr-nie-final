@@ -3,8 +3,8 @@
 
 Regenerate with: python3 build_pdf.py   (needs reportlab + Pillow, and the
 Liberation fonts at FONT_DIR below). Edit the copy in the section_*()
-functions to update content; swap assets/team_shikhar_placeholder.png for a
-real photo once one is available and re-run.
+functions to update content. Three pages total: cover, approach &
+methodology, and impact / partnership / team.
 """
 import os
 from PIL import Image as PILImage
@@ -360,6 +360,8 @@ styles = {
                                     textColor=GOLD, spaceAfter=4),
     'h1': ParagraphStyle('h1', fontName='Serif-Bold', fontSize=21, leading=25,
                           textColor=NAVY, spaceAfter=10),
+    'h1_sm': ParagraphStyle('h1_sm', fontName='Serif-Bold', fontSize=16, leading=19,
+                             textColor=NAVY, spaceAfter=6),
     'h1_white': ParagraphStyle('h1_white', fontName='Serif-Bold', fontSize=27, leading=32,
                                 textColor=WHITE, spaceAfter=8),
     'subtitle_white': ParagraphStyle('subtitle_white', fontName='Sans', fontSize=12.5, leading=17,
@@ -586,9 +588,7 @@ def draw_cover(c, doc):
     c.setFillColor(HexColor('#9FB2D6'))
     c.drawCentredString(PAGE_W / 2, band_h - 70, "JUMP TO")
 
-    jump = [('Project Overview', 'sec_overview'), ('Methodology', 'sec_method'),
-            ('Scope & Impact', 'sec_scope'), ('Partnership', 'sec_partner'),
-            ('Project Team', 'sec_team')]
+    jump = [('Approach & Methodology', 'sec_approach'), ('Impact, Partnership & Team', 'sec_impact')]
     c.setFont('Sans-Bold', 9.3)
     gap = 16
     widths = [stringWidth(t, 'Sans-Bold', 9.3) for t, _ in jump]
@@ -615,11 +615,8 @@ def draw_cover(c, doc):
 # Inner page chrome (header / footer / bookmarks)
 # ---------------------------------------------------------------------------
 SECTION_BY_PAGE = {
-    2: ("PROJECT OVERVIEW", 'sec_overview', 'Project Overview'),
-    3: ("METHODOLOGY", 'sec_method', 'Methodology'),
-    4: ("SCOPE & IMPACT", 'sec_scope', 'Scope & Impact'),
-    5: ("INSTITUTIONAL PARTNERSHIP", 'sec_partner', 'Institutional Partnership'),
-    6: ("PROJECT TEAM", 'sec_team', 'Project Team'),
+    2: ("APPROACH & METHODOLOGY", 'sec_approach', 'Approach & Methodology'),
+    3: ("IMPACT, PARTNERSHIP & TEAM", 'sec_impact', 'Impact, Partnership & Team'),
 }
 
 
@@ -656,81 +653,58 @@ def draw_inner(c, doc):
 # ---------------------------------------------------------------------------
 # Section content builders
 # ---------------------------------------------------------------------------
-def section_overview(W):
+def section_approach_methodology(W):
     items = []
     items.append(Paragraph('PROJECT OVERVIEW', styles['kicker']))
-    items.append(Paragraph('Turning Clinical Symptoms into Faster, Smarter Diagnostic Decisions', styles['h1']))
+    items.append(Paragraph('Turning Clinical Symptoms into Faster, Smarter Diagnostic Decisions', styles['h1_sm']))
 
-    lead1 = ("India's public-health laboratories and frontline clinicians confront an unusually broad and "
-             "constantly shifting spectrum of viral and infectious pathogens. When a patient presents with "
-             "fever, respiratory distress, or a neurological syndrome, deciding which of dozens of possible "
-             "laboratory tests to prioritise is a time-critical judgement call — one that shapes how quickly "
-             "a patient is diagnosed and how efficiently a laboratory's testing capacity is used.")
-    lead2 = ("This project, undertaken by the Amity Centre for Artificial Intelligence in partnership with "
-             "ICMR – National Institute of Epidemiology, develops an AI-based clinical decision-support "
-             "system that turns a patient's demographic profile, clinical symptoms and syndromic presentation "
-             "into a ranked, confidence-scored shortlist of the most probable infections — guiding the "
-             "clinician toward the most relevant confirmatory laboratory test at the point of care.")
-    items.append(Paragraph(lead1, styles['lead']))
-    items.append(Paragraph(lead2, styles['lead']))
-    items.append(Spacer(1, 4))
-
-    callout_content = vstack([
-        Paragraph('DESIGNED TO SUPPORT, NOT REPLACE, CLINICAL JUDGEMENT',
-                  ParagraphStyle('co_h', fontName='Sans-Bold', fontSize=9.6, textColor=GOLD, leading=12)),
-        Paragraph('Every recommendation is reviewed by a treating physician and validated against confirmed '
-                  'laboratory results before it informs patient care.', styles['callout_b']),
-    ], W - 28, gaps=[4])
-    items.append(RoundedCard(callout_content, W, bg=NAVY, pad=14, radius=10))
-    items.append(Spacer(1, 16))
-
-    items.append(Paragraph('PROJECT OBJECTIVES', styles['kicker']))
-    items.append(Spacer(1, 2))
+    lead = ("India's public-health laboratories confront a broad, constantly shifting spectrum of viral "
+            "pathogens, where deciding which laboratory test to prioritise for a patient is a time-critical "
+            "judgement call. This project — led by the Amity Centre for Artificial Intelligence with ICMR's "
+            "National Institute of Epidemiology — turns a patient's symptoms and syndromic presentation into "
+            "a ranked, confidence-scored shortlist of the most probable infections, guiding clinicians toward "
+            "the right confirmatory test at the point of care.")
+    items.append(Paragraph(lead, styles['body']))
+    items.append(Spacer(1, 8))
 
     obj_data = [
         ('intake', 'Smart Infection Triage',
-         "Analyse patient demographics, symptoms and syndromic presentation to recommend the most probable "
-         "infections and prioritise the right laboratory tests."),
+         "Ranks the most probable infections and the right lab test from symptoms, demographics and syndrome."),
         ('feature', 'Rigorous Model Optimisation',
-         "Benchmark and refine multiple modelling approaches to maximise diagnostic accuracy and consistency "
-         "with recognised clinical syndrome definitions."),
+         "Multiple modelling approaches benchmarked for diagnostic accuracy and clinical consistency."),
         ('check', 'Human-in-the-Loop Validation',
-         "Close the loop between AI recommendations, clinician review and confirmed laboratory results, so "
-         "every case strengthens the system over time."),
+         "Clinician review and confirmed lab outcomes close the loop, strengthening the system with every case."),
         ('globe', 'Surveillance & Outbreak Intelligence',
-         "Lay the groundwork to surface geographic and seasonal infection patterns across ICMR's national "
-         "surveillance network, supporting early outbreak signal detection."),
+         "Foundations for surfacing geographic and seasonal outbreak signals across ICMR's network."),
     ]
-    gap = 14
+    gap = 16
     col_w = (W - gap) / 2
-    cards = []
+    icon_col = 26
+    text_col = col_w - icon_col - 10
+    obj_h_style = ParagraphStyle('obj_h', fontName='Sans-Bold', fontSize=9.6, leading=11.6, textColor=NAVY)
+    obj_b_style = ParagraphStyle('obj_b', fontName='Sans', fontSize=8.1, leading=10.8, textColor=MUTED)
+    cells = []
     for icon, h, b in obj_data:
-        content = vstack([
-            IconIndicator(icon, d=32, bg=MED_BLUE),
-            Paragraph(h, styles['card_h']),
-            Paragraph(b, styles['card_b']),
-        ], col_w - 28, gaps=[7, 4])
-        cards.append(RoundedCard(content, col_w, bg=PANEL, pad=14, radius=9))
-    grid = Table([[cards[0], cards[1]], [cards[2], cards[3]]], colWidths=[col_w, col_w])
+        text_cell = vstack([Paragraph(h, obj_h_style), Paragraph(b, obj_b_style)], text_col, gaps=[2])
+        cells.append(row([IconIndicator(icon, d=24, bg=MED_BLUE), text_cell], [icon_col, text_col],
+                          gap=10, valign='TOP', align='LEFT'))
+    grid = Table([[cells[0], cells[1]], [cells[2], cells[3]]], colWidths=[col_w, col_w])
     grid.setStyle(TableStyle([
         ('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 0),
         ('TOPPADDING', (0, 0), (-1, -1), 0), ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
         ('RIGHTPADDING', (0, 0), (0, -1), gap),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), gap),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
     ]))
     items.append(grid)
-    return items
+    items.append(Spacer(1, 16))
 
-
-def section_methodology(W):
-    items = []
     items.append(Paragraph('METHODOLOGY', styles['kicker']))
-    items.append(Paragraph('From Symptom to Recommendation: How the System Works', styles['h1']))
+    items.append(Paragraph('From Symptom to Recommendation: How the System Works', styles['h1_sm']))
     items.append(Paragraph(
         "Each case moves through a structured, six-stage pipeline that pairs rich clinical data with a "
-        "purpose-built AI model — and feeds confirmed outcomes back into the system.", styles['lead']))
-    items.append(Spacer(1, 8))
+        "purpose-built AI model — and feeds confirmed outcomes back into the system.", styles['body']))
+    items.append(Spacer(1, 6))
 
     steps = [
         {'icon': 'intake', 'label': 'Clinical Intake'},
@@ -740,60 +714,37 @@ def section_methodology(W):
         {'icon': 'lab', 'label': 'Clinician & Lab Review'},
         {'icon': 'loop', 'label': 'Continuous Learning'},
     ]
-    diagram_content = ProcessFlow(steps, icon_d=44, band_h=100)
-    items.append(RoundedCard(diagram_content, W, bg=PANEL, pad=14, radius=10))
-    items.append(Spacer(1, 18))
+    diagram_content = ProcessFlow(steps, icon_d=40, band_h=92)
+    items.append(RoundedCard(diagram_content, W, bg=PANEL, pad=12, radius=10))
+    items.append(Spacer(1, 12))
 
-    legend = [
-        ('1', 'Clinical Intake',
-         "Patient demographics, geographic details and a structured checklist of 35 symptom indicators across "
-         "neurological, respiratory, gastrointestinal, dermatological and systemic presentations are captured "
-         "at the point of care."),
-        ('2', 'Feature Engineering',
-         "Clinical, geographic (state / district) and temporal (seasonality, illness duration) signals are "
-         "combined into a single structured patient profile."),
-        ('3', 'AI Classification',
-         "A purpose-built, dual-stage deep-learning model first narrows to the most probable major infection "
-         "group, then resolves closely related sub-types — each with a calibrated confidence score."),
-        ('4', 'Syndrome Check',
-         "Recommendations are automatically cross-checked against the reported clinical syndrome, filtering "
-         "out results inconsistent with the clinical picture before they reach the clinician."),
-        ('5', 'Clinician & Lab Review',
-         "The treating physician reviews the ranked recommendations; once confirmatory laboratory results are "
-         "available, they are recorded against the case."),
-        ('6', 'Continuous Learning',
-         "Confirmed outcomes flow back into ongoing model evaluation, so the system keeps improving with "
-         "every case."),
-    ]
-    legend_rows = []
-    for num, h, b in legend:
-        num_cell = Paragraph(num, styles['legend_num'])
-        text_cell = vstack([Paragraph(h, styles['legend_h']), Paragraph(b, styles['legend_b'])],
-                            W - 22 - 14, gaps=[1])
-        legend_rows.append(row([num_cell, text_cell], [22, W - 22 - 14], gap=14, valign='TOP', align='LEFT'))
-    items.append(vstack(legend_rows, W, gaps=[11] * (len(legend_rows) - 1) + [0]))
-    items.append(Spacer(1, 18))
+    items.append(Paragraph(
+        "Patient symptoms and geography feed a dual-stage AI classifier that narrows to the most likely "
+        "infection group and sub-type, each with a calibrated confidence score. Recommendations are "
+        "cross-checked against the reported clinical syndrome, reviewed by the treating physician, and "
+        "confirmed against laboratory results — with every outcome feeding back into ongoing model evaluation.",
+        styles['body']))
+    items.append(Spacer(1, 10))
 
     callout_content = vstack([
-        Paragraph('TRANSPARENT BY DESIGN',
-                  ParagraphStyle('co3', fontName='Sans-Bold', fontSize=9.6, textColor=GOLD, leading=12)),
-        Paragraph("Every recommendation carries a calibrated confidence score alongside its leading "
-                  "alternatives, so the clinician always sees the model's reasoning — never a single, "
-                  "unexplained answer.", styles['callout_b']),
+        Paragraph('DESIGNED TO SUPPORT, NOT REPLACE, CLINICAL JUDGEMENT',
+                  ParagraphStyle('co_h', fontName='Sans-Bold', fontSize=9.6, textColor=GOLD, leading=12)),
+        Paragraph('Every recommendation carries a calibrated confidence score and is reviewed by the treating '
+                  'physician against confirmed laboratory results before it informs patient care.',
+                  styles['callout_b']),
     ], W - 28, gaps=[4])
     items.append(RoundedCard(callout_content, W, bg=NAVY, pad=14, radius=10))
     return items
 
 
-def section_scope(W):
+def section_impact_team(W):
     items = []
     items.append(Paragraph('SCOPE &amp; COVERAGE', styles['kicker']))
-    items.append(Paragraph("Built on One of India's Richest Clinical Surveillance Datasets", styles['h1']))
+    items.append(Paragraph("Built on One of India's Richest Clinical Surveillance Datasets", styles['h1_sm']))
     items.append(Paragraph(
-        "The system is trained and continuously evaluated on real-world clinical data contributed through "
-        "ICMR's national surveillance network — giving it a breadth of coverage few diagnostic "
-        "decision-support tools can match.", styles['lead']))
-    items.append(Spacer(1, 6))
+        "Trained and continuously evaluated on real-world clinical data from ICMR's national surveillance "
+        "network, spanning pathogens, geographies and syndromes.", styles['body']))
+    items.append(Spacer(1, 8))
 
     stats = [
         ('24', 'Major infection<br/>categories'),
@@ -805,13 +756,13 @@ def section_scope(W):
     ]
     gap = 12
     col_w = (W - 2 * gap) / 3
+    stat_num_sm = ParagraphStyle('stat_num_sm', fontName='Serif-Bold', fontSize=19, leading=21,
+                                  textColor=NAVY, alignment=TA_CENTER)
     tiles = []
     for num, lbl in stats:
-        content = vstack([
-            Paragraph(num, styles['stat_num']),
-            Paragraph(lbl, styles['stat_lbl']),
-        ], col_w - 20, gaps=[3], align='CENTER')
-        tiles.append(RoundedCard(content, col_w, bg=PANEL_ALT, pad=12, radius=9))
+        content = vstack([Paragraph(num, stat_num_sm), Paragraph(lbl, styles['stat_lbl'])],
+                          col_w - 16, gaps=[2], align='CENTER')
+        tiles.append(RoundedCard(content, col_w, bg=PANEL_ALT, pad=9, radius=9))
     grid = Table([tiles[0:3], tiles[3:6]], colWidths=[col_w] * 3)
     grid.setStyle(TableStyle([
         ('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 0),
@@ -820,140 +771,56 @@ def section_scope(W):
         ('BOTTOMPADDING', (0, 0), (-1, 0), gap),
     ]))
     items.append(grid)
-    items.append(Spacer(1, 16))
+    items.append(Spacer(1, 18))
 
-    items.append(Paragraph(
-        "Recommendations span globally significant pathogens — including Dengue, Chikungunya, Japanese "
-        "Encephalitis, Hepatitis A/B/C/E, Influenza A and B subtypes (H1N1, H3N2, Victoria), SARS-CoV-2, "
-        "Respiratory Syncytial Virus and more — with a further refinement layer resolving additional "
-        "sub-types (including Zika, West Nile virus and Kyasanur Forest Disease) within the broader ‘other "
-        "viral infections’ group. Every recommendation is cross-referenced against ICMR's curated national "
-        "reference panel of confirmatory laboratory tests, keeping the tool aligned with what laboratories "
-        "can practically confirm.", styles['body']))
-    items.append(Spacer(1, 8))
-
-    callout_content = vstack([
-        Paragraph('CLOSING THE LOOP — FROM PREDICTION TO CONFIRMED DIAGNOSIS',
-                  ParagraphStyle('co2', fontName='Sans-Bold', fontSize=9.6, textColor=GOLD, leading=12)),
-        Paragraph("Unlike a one-way prediction tool, the system tracks each case from initial AI recommendation "
-                  "through clinician review to confirmed laboratory outcome — building a continuously "
-                  "growing, ground-truthed evidence base for future refinement.", styles['callout_b']),
-    ], W - 28, gaps=[4])
-    items.append(RoundedCard(callout_content, W, bg=NAVY, pad=14, radius=10))
-    items.append(Spacer(1, 12))
-
-    note_style = ParagraphStyle('note', fontName='Sans-Italic', fontSize=8.8, textColor=MUTED, leading=12.6)
-    gap2 = 20
-    note_w = (W - gap2) / 2
-    notes = row([
-        Paragraph("<b>Roadmap.</b> Extending this evidence base to surface geographic and seasonal "
-                  "outbreak-pattern signals across ICMR's wider national surveillance repository.", note_style),
-        Paragraph("<b>Data governance.</b> All clinical records are de-identified and handled under "
-                  "access-controlled, audit-logged safeguards consistent with ICMR data-governance protocols.",
-                  note_style),
-    ], [note_w, note_w], gap=gap2, valign='TOP', align='LEFT')
-    items.append(notes)
-    return items
-
-
-def section_partnership(W):
-    items = []
     items.append(Paragraph('INSTITUTIONAL PARTNERSHIP', styles['kicker']))
-    items.append(Paragraph('A Collaboration Between AI Research and Public-Health Expertise', styles['h1']))
-    items.append(Paragraph(
-        "The project brings together specialist AI research capability with deep clinical and epidemiological "
-        "expertise, under the umbrella of India's apex medical research body.", styles['lead']))
-    items.append(Spacer(1, 10))
-
-    gap = 14
-    col_w = (W - 2 * gap) / 3
+    items.append(Spacer(1, 4))
+    gap2 = 16
+    col_w2 = (W - 2 * gap2) / 3
     partners = [
-        ('amity_full_logo.png', 38,
-         'Amity Centre for Artificial Intelligence, Amity University',
-         'AI and machine-learning research, system design and model development.'),
-        ('icmr_nie_logo.png', 32,
-         'ICMR – National Institute of Epidemiology',
-         "Clinical and epidemiological expertise, and access to India's national viral surveillance network."),
-        ('dhr_logo.png', 58,
-         'Department of Health Research, Government of India',
-         'National public-health policy alignment and programme support.'),
+        ('amity_full_logo.png', 30, 'Amity Centre for Artificial Intelligence'),
+        ('icmr_nie_logo.png', 26, 'ICMR – National Institute of Epidemiology'),
+        ('dhr_logo.png', 44, 'Department of Health Research, Govt. of India'),
     ]
     cards = []
-    for fname, h, name, desc in partners:
+    for fname, h, name in partners:
         img = img_flowable(asset(fname), height=h)
-        content = vstack([img, Paragraph(name, styles['partner_h']), Paragraph(desc, styles['partner_b'])],
-                          col_w - 24, gaps=[8, 4], align='CENTER')
-        cards.append(RoundedCard(content, col_w, bg=WHITE, border=CARD_BORDER, pad=14, radius=9))
-    items.append(row(cards, [col_w] * 3, gap=gap))
+        content = vstack([img, Paragraph(name, styles['partner_h'])], col_w2 - 20, gaps=[6], align='CENTER')
+        cards.append(RoundedCard(content, col_w2, bg=WHITE, border=CARD_BORDER, pad=10, radius=9))
+    items.append(row(cards, [col_w2] * 3, gap=gap2))
     items.append(Spacer(1, 20))
 
-    band_content = Paragraph('PROJECT SUPPORTED BY THE INDIAN COUNCIL OF MEDICAL RESEARCH (ICMR)',
-                              ParagraphStyle('fund', fontName='Sans-Bold', fontSize=11,
-                                             textColor=GOLD, alignment=TA_CENTER))
-    items.append(RoundedCard(band_content, W, bg=NAVY_DEEP, pad=16, radius=9))
+    items.append(Paragraph('PROJECT TEAM', styles['kicker']))
+    items.append(Spacer(1, 4))
+
+    team = [
+        ('team_dutta.png', 'Prof. M. K. Dutta', 'Principal Investigator · Amity Centre for AI'),
+        ('team_rizwan.png', 'Dr. Rizwan S A', 'Principal Investigator · ICMR, NIE'),
+        ('team_janani.png', 'R. Janani Surya', 'Co-Principal Investigator · ICMR, NIE'),
+        ('team_joshi.png', 'Dr. Rakesh C Joshi', 'Co-Principal Investigator · Amity Centre for AI'),
+        ('team_kaushal.png', 'Dr. Abhishek Kaushal', 'Project Scientist · Amity Centre for AI'),
+        ('team_shikhar.png', 'Shikhar Singh', 'Contributor · Amity Centre for AI'),
+    ]
+
+    def member(photo, name, role):
+        img = img_flowable(asset(photo), width=50)
+        return vstack([img, Paragraph(name, styles['team_name']), Paragraph(role, styles['team_role'])],
+                       col_w2, gaps=[5, 1], align='CENTER')
+
+    members = [member(*m) for m in team]
+    team_grid = vstack([
+        row(members[0:3], [col_w2] * 3, gap=gap2),
+        row(members[3:6], [col_w2] * 3, gap=gap2),
+    ], W, gaps=[14])
+    items.append(team_grid)
     items.append(Spacer(1, 22))
 
-    items.append(Paragraph(
-        "This partnership model — pairing Amity's AI research capability with ICMR's clinical and "
-        "public-health authority — reflects a broader approach to translating advanced machine learning "
-        "into tools that clinicians can trust and public-health laboratories can act on.", styles['lead']))
-    items.append(Spacer(1, 4))
-    items.append(Paragraph(
-        f'Read more about ACAI’s research portfolio at '
-        f'<a href="{SITE_URL}" color="#1565C0"><u>{SITE_URL.replace("https://", "")}</u></a>',
-        ParagraphStyle('cta', fontName='Sans', fontSize=9.4, textColor=INK, leading=13)))
-    return items
-
-
-def section_team(W):
-    items = []
-    items.append(Paragraph('OUR TEAM', styles['kicker']))
-    items.append(Paragraph('The People Behind the Project', styles['h1']))
-    items.append(Paragraph(
-        "A multidisciplinary team spanning artificial-intelligence research and clinical epidemiology leads "
-        "the project's day-to-day work.", styles['lead']))
-    items.append(Spacer(1, 12))
-
-    def member(photo, name, affil_html):
-        img = img_flowable(asset(photo), width=66)
-        return vstack([img, Paragraph(name, styles['team_name']), Paragraph(affil_html, styles['team_role'])],
-                       150, gaps=[7, 1], align='CENTER')
-
-    def group_label(text):
-        content = Paragraph(text.upper(), styles['group_lbl'])
-        return RoundedCard(content, W, bg=NAVY, pad=7, radius=6)
-
-    items.append(group_label('Principal Investigators'))
-    items.append(Spacer(1, 12))
-    items.append(center(row([
-        member('team_dutta.png', 'Prof. M. K. Dutta', 'Amity Centre for<br/>Artificial Intelligence'),
-        member('team_rizwan.png', 'Dr. Rizwan S A', 'ICMR, NIE'),
-    ], [150, 150], gap=36), W))
-    items.append(Spacer(1, 20))
-
-    items.append(group_label('Co-Principal Investigators'))
-    items.append(Spacer(1, 12))
-    items.append(center(row([
-        member('team_janani.png', 'R. Janani Surya', 'ICMR, NIE'),
-        member('team_joshi.png', 'Dr. Rakesh C Joshi', 'Amity Centre for<br/>Artificial Intelligence'),
-    ], [150, 150], gap=36), W))
-    items.append(Spacer(1, 20))
-
-    items.append(group_label('Project Scientist &amp; Contributor'))
-    items.append(Spacer(1, 12))
-    items.append(center(row([
-        member('team_kaushal.png', 'Dr. Abhishek Kaushal', 'Amity Centre for<br/>Artificial Intelligence'),
-        member('team_shikhar_placeholder.png', 'Shikhar Singh', 'Amity Centre for<br/>Artificial Intelligence'),
-    ], [150, 150], gap=36), W))
-    items.append(Spacer(1, 26))
-
-    ack_content = Paragraph(
-        "The team gratefully acknowledges the clinicians, laboratory staff and site investigators across "
-        "ICMR's Virus Research & Diagnostic Laboratories network whose careful case reporting makes this "
-        "system possible.",
-        ParagraphStyle('ack', fontName='Sans-Italic', fontSize=9, textColor=MUTED,
-                        leading=13, alignment=TA_CENTER))
-    items.append(RoundedCard(ack_content, W, bg=PANEL, pad=14, radius=9))
+    band_content = Paragraph(
+        f'PROJECT SUPPORTED BY THE INDIAN COUNCIL OF MEDICAL RESEARCH (ICMR)  ·  '
+        f'<a href="{SITE_URL}" color="#D9A441"><u>{SITE_URL.replace("https://", "")}</u></a>',
+        ParagraphStyle('fund', fontName='Sans-Bold', fontSize=10, leading=13,
+                        textColor=GOLD, alignment=TA_CENTER))
+    items.append(RoundedCard(band_content, W, bg=NAVY_DEEP, pad=13, radius=9))
 
     return items
 
@@ -984,15 +851,9 @@ def build():
     W = PAGE_W - 92
 
     story = [Spacer(1, 1), NextPageTemplate('Inner'), PageBreak()]
-    story += section_overview(W)
+    story += section_approach_methodology(W)
     story.append(PageBreak())
-    story += section_methodology(W)
-    story.append(PageBreak())
-    story += section_scope(W)
-    story.append(PageBreak())
-    story += section_partnership(W)
-    story.append(PageBreak())
-    story += section_team(W)
+    story += section_impact_team(W)
 
     doc.build(story)
     print('PDF written to', OUT_PDF)
