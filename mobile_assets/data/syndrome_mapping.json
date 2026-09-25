@@ -1,0 +1,92 @@
+[
+  {
+    "overall_syndrome": "ARI/Influenza Like Illness (ILI)",
+    "syndrome_label": "ARI/Influenza Like Illness (ILI)",
+    "encoded_value": 0
+  },
+  {
+    "overall_syndrome": "Cough <= 2 weeks without fever",
+    "syndrome_label": "ARI/Influenza Like Illness (ILI)",
+    "encoded_value": 0
+  },
+  {
+    "overall_syndrome": "Cough <= 2 weeks with fever",
+    "syndrome_label": "ARI/Influenza Like Illness (ILI)",
+    "encoded_value": 0
+  },
+  {
+    "overall_syndrome": "Cough > 2 weeks with fever",
+    "syndrome_label": "ARI/Influenza Like Illness (ILI)",
+    "encoded_value": 0
+  },
+  {
+    "overall_syndrome": "Acute Diarrheal Disease",
+    "syndrome_label": "Acute Diarrheal Disease",
+    "encoded_value": 1
+  },
+  {
+    "overall_syndrome": "Dysentery",
+    "syndrome_label": "Acute Diarrheal Disease",
+    "encoded_value": 1
+  },
+  {
+    "overall_syndrome": "Acute Encephalitis Syndrome (AES)",
+    "syndrome_label": "Acute Encephalitis Syndrome (AES)",
+    "encoded_value": 2
+  },
+  {
+    "overall_syndrome": "Fever with Altered Sensorium",
+    "syndrome_label": "Acute Encephalitis Syndrome (AES)",
+    "encoded_value": 2
+  },
+  {
+    "overall_syndrome": "Conjunctivitis",
+    "syndrome_label": "Conjunctivitis",
+    "encoded_value": 3
+  },
+  {
+    "overall_syndrome": "Fever with Rash",
+    "syndrome_label": "Fever with Rash",
+    "encoded_value": 4
+  },
+  {
+    "overall_syndrome": "Rash",
+    "syndrome_label": "Fever with Rash",
+    "encoded_value": 4
+  },
+  {
+    "overall_syndrome": "Hemorrhagic fever",
+    "syndrome_label": "Hemorrhagic fever",
+    "encoded_value": 5
+  },
+  {
+    "overall_syndrome": "Fever with Bleeding",
+    "syndrome_label": "Hemorrhagic fever",
+    "encoded_value": 5
+  },
+  {
+    "overall_syndrome": "Jaundice of < 4 weeks",
+    "syndrome_label": "Jaundice of < 4 weeks",
+    "encoded_value": 6
+  },
+  {
+    "overall_syndrome": "Acute Hepatitis",
+    "syndrome_label": "Jaundice of < 4 weeks",
+    "encoded_value": 6
+  },
+  {
+    "overall_syndrome": "Only Fever < 7 days",
+    "syndrome_label": "Only Fever < 7 days",
+    "encoded_value": 7
+  },
+  {
+    "overall_syndrome": "Only Fever >= 7 days",
+    "syndrome_label": "Only Fever < 7 days",
+    "encoded_value": 7
+  },
+  {
+    "overall_syndrome": "Severe Acute Respiratory Infection (SARI)",
+    "syndrome_label": "Severe Acute Respiratory Infection (SARI)",
+    "encoded_value": 8
+  }
+]
