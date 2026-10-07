@@ -3,10 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:printing/printing.dart';
 import 'package:provider/provider.dart';
 
+import '../../auth/auth_controller.dart';
+import '../../auth/auth_models.dart';
 import '../../models/patient_record.dart';
 import '../../providers/app_provider.dart';
 import '../../services/csv_export_service.dart';
 import '../../services/pdf_report_service.dart';
+import '../widgets/auth_widgets.dart';
 import 'update_dr_screen.dart';
 
 class RecordsScreen extends StatefulWidget {
@@ -27,6 +30,11 @@ class _RecordsScreenState extends State<RecordsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Admin-only, re-checked here behind the navigation (like the web's
+    // require_page_access).
+    if (!context.watch<AuthController>().canOpen(AppPage.records)) {
+      return const AccessDeniedView();
+    }
     final provider = context.watch<AppProvider>();
     final records = provider.records;
 
@@ -53,6 +61,7 @@ class _RecordsScreenState extends State<RecordsScreen> {
             tooltip: 'Refresh',
             onPressed: () => provider.refreshRecords(),
           ),
+          const AccountButton(),
         ],
       ),
       body: Column(

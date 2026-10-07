@@ -38,9 +38,20 @@ class AppDatabase {
 
     return await openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: _createDB,
+      onOpen: _ensureSymptomsColumn,
     );
+  }
+
+  /// Databases created by earlier builds have no `symptoms_json` column
+  /// (those builds failed to save any patient because of it), so add it on
+  /// open. Checked every time, so it works whatever build created the file.
+  Future<void> _ensureSymptomsColumn(Database db) async {
+    final columns = await db.rawQuery('PRAGMA table_info(patients)');
+    if (!columns.any((c) => c['name'] == 'symptoms_json')) {
+      await db.execute('ALTER TABLE patients ADD COLUMN symptoms_json TEXT');
+    }
   }
 
   Future<void> _createDB(Database db, int version) async {
@@ -72,6 +83,7 @@ class AppDatabase {
         duration_of_illness INTEGER,
         syndrome_encoded INTEGER,
         syndrome_name TEXT,
+        symptoms_json TEXT,
         predicted_virus_name TEXT,
         prediction_confidence REAL,
         top_1_virus TEXT,

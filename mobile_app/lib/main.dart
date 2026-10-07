@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import 'auth/auth_controller.dart';
+import 'auth/auth_service.dart';
+import 'auth/clerk_auth_service.dart';
 import 'providers/app_provider.dart';
-import 'ui/widgets/navigation_shell.dart';
+import 'ui/widgets/auth_gate.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -17,8 +20,43 @@ void main() async {
   runApp(const AmityIcmrApp());
 }
 
-class AmityIcmrApp extends StatelessWidget {
-  const AmityIcmrApp({super.key});
+class AmityIcmrApp extends StatefulWidget {
+  const AmityIcmrApp({super.key, this.authService, this.appProvider});
+
+  /// Defaults to Clerk (same accounts as the web app); tests pass a fake.
+  final AuthService? authService;
+
+  @visibleForTesting
+  final AppProvider? appProvider;
+
+  @override
+  State<AmityIcmrApp> createState() => _AmityIcmrAppState();
+}
+
+class _AmityIcmrAppState extends State<AmityIcmrApp> {
+  late final AuthController _auth =
+      AuthController(widget.authService ?? ClerkAuthService());
+  // Created up front so the ML models load while the person signs in.
+  late final AppProvider _app = widget.appProvider ?? AppProvider();
+
+  @override
+  void initState() {
+    super.initState();
+    _auth.addListener(_syncAccess);
+    _auth.initialize();
+  }
+
+  // Role changes (sign-in, sign-out, admin promotion/demotion picked up in
+  // the background) immediately change what data the app will load.
+  void _syncAccess() => _app.applyAccess(_auth.session);
+
+  @override
+  void dispose() {
+    _auth.removeListener(_syncAccess);
+    _auth.dispose();
+    _app.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -27,7 +65,8 @@ class AmityIcmrApp extends StatelessWidget {
 
     return MultiProvider(
       providers: [
-        ChangeNotifierProvider(create: (_) => AppProvider()),
+        ChangeNotifierProvider.value(value: _auth),
+        ChangeNotifierProvider.value(value: _app),
       ],
       child: MaterialApp(
         title: 'ICMR-NIE & ACAI Virus Diagnostic System',
@@ -95,7 +134,7 @@ class AmityIcmrApp extends StatelessWidget {
             ),
           ),
         ),
-        home: const NavigationShell(),
+        home: const AuthGate(),
       ),
     );
   }

@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../auth/auth_controller.dart';
+import '../../auth/auth_models.dart';
 import '../../models/patient_record.dart';
 import '../../providers/app_provider.dart';
 import '../../services/reference_data_service.dart';
+import '../widgets/auth_widgets.dart';
 
 class UpdateDrScreen extends StatefulWidget {
   final PatientRecord record;
@@ -43,6 +46,9 @@ class _UpdateDrScreenState extends State<UpdateDrScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (!context.watch<AuthController>().canOpen(AppPage.records)) {
+      return const AccessDeniedView();
+    }
     final provider = context.watch<AppProvider>();
     final allPathogens = ReferenceDataService.instance.pathogens;
 

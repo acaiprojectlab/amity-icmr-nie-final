@@ -43,6 +43,8 @@ dependencies:
   printing: ^5.15.0
   fl_chart: ^1.2.0
   onnxruntime: ^1.4.1
+  clerk_auth: 0.0.18-beta
+  path_provider: ^2.1.6
 
 dev_dependencies:
   flutter_test:
@@ -54,6 +56,7 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+  sqflite_common_ffi: ^2.4.3
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import '../auth/auth_models.dart';
 import '../database/app_database.dart';
 import '../ml/onnx_predictor.dart';
 import '../models/metadata_models.dart';
@@ -47,19 +48,19 @@ class AppProvider extends ChangeNotifier {
 
   // Records & Dashboard State
   List<PatientRecord> _records = [];
-  DashboardMetrics _metrics = DashboardMetrics(
-    enrolled: 0,
-    drCompleted: 0,
-    drPending: 0,
-    daily: 0,
-    weekly: 0,
-    monthly: 0,
-  );
+  DashboardMetrics _metrics = _emptyMetrics();
   String _statusFilter = 'All'; // 'All', 'Pending', 'Completed'
   String _searchQuery = '';
   String? _filterHospital;
   String? _filterDepartment;
   bool _isLoadingRecords = false;
+
+  // Role-based access (set from the signed-in session by the auth gate).
+  // Patient records and case metrics are admin-only, as on the web; for
+  // anyone else they are never loaded into memory, and record-changing
+  // actions refuse to run.
+  String? _accessUserId;
+  bool _canViewRecords = false;
 
   // Getters
   bool get isInitializing => _isInitializing;
@@ -72,6 +73,7 @@ class AppProvider extends ChangeNotifier {
   String get statusFilter => _statusFilter;
   String get searchQuery => _searchQuery;
   bool get isLoadingRecords => _isLoadingRecords;
+  bool get canViewRecords => _canViewRecords;
 
   DateTime get dateOfCollection => _dateOfCollection;
   String get patientName => _patientName;
@@ -99,6 +101,15 @@ class AppProvider extends ChangeNotifier {
   Map<String, int> get symptoms => Map.unmodifiable(_symptoms);
 
   int mathMax(int a, int b) => a > b ? a : b;
+
+  static DashboardMetrics _emptyMetrics() => DashboardMetrics(
+        enrolled: 0,
+        drCompleted: 0,
+        drPending: 0,
+        daily: 0,
+        weekly: 0,
+        monthly: 0,
+      );
 
   AppProvider() {
     initApp();
@@ -141,6 +152,36 @@ class AppProvider extends ChangeNotifier {
       _initError = e.toString();
       _isInitializing = false;
       notifyListeners();
+    }
+  }
+
+  // --- Role-based access ---
+
+  /// Apply the signed-in person's access. A change of person (including
+  /// sign-out) clears the intake form so the next user never sees the
+  /// previous patient's details.
+  void applyAccess(AuthSession? session) {
+    final userId = session?.userId;
+    if (userId != _accessUserId) {
+      _accessUserId = userId;
+      resetForm();
+    }
+    final canView =
+        session != null && roleCanOpen(session.role, AppPage.records);
+    if (canView == _canViewRecords) return;
+    _canViewRecords = canView;
+    if (canView) {
+      refreshDashboard();
+    } else {
+      _records = [];
+      _metrics = _emptyMetrics();
+      notifyListeners();
+    }
+  }
+
+  void _requireRecordsAccess() {
+    if (!_canViewRecords) {
+      throw StateError('Administrator access is required for patient records.');
     }
   }
 
@@ -448,6 +489,7 @@ class AppProvider extends ChangeNotifier {
     required String labId,
     required List<String> recommendedPathogens,
   }) async {
+    _requireRecordsAccess();
     await _db.updateDoctorRecommendation(
       id: recordId,
       labId: labId.trim(),
@@ -458,6 +500,7 @@ class AppProvider extends ChangeNotifier {
 
   // --- Soft-Delete Record ---
   Future<void> softDeleteRecord(int recordId) async {
+    _requireRecordsAccess();
     await _db.softDeletePatient(recordId);
     await refreshDashboard();
   }
@@ -484,6 +527,10 @@ class AppProvider extends ChangeNotifier {
   }
 
   Future<void> refreshRecords() async {
+    if (!_canViewRecords) {
+      _records = [];
+      return;
+    }
     _isLoadingRecords = true;
     notifyListeners();
 
@@ -499,6 +546,11 @@ class AppProvider extends ChangeNotifier {
   }
 
   Future<void> refreshDashboard() async {
+    if (!_canViewRecords) {
+      _metrics = _emptyMetrics();
+      _records = [];
+      return;
+    }
     _metrics = await _db.getDashboardMetrics();
     await refreshRecords();
   }

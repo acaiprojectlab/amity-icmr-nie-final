@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../auth/auth_controller.dart';
+import '../../auth/auth_models.dart';
 import '../../models/prediction_result.dart';
 import '../../providers/app_provider.dart';
 import '../../services/pdf_report_service.dart';
@@ -335,17 +337,20 @@ class PredictionResultScreen extends StatelessWidget {
                   PdfReportService.printOrShare(provider.lastEnrolledRecord!);
                 },
               ),
-              const SizedBox(height: 8),
-              OutlinedButton.icon(
-                icon: const Icon(Icons.folder_shared_outlined),
-                label: const Text('Go to View Records'),
-                onPressed: () {
-                  Navigator.pushReplacement(
-                    context,
-                    MaterialPageRoute(builder: (_) => const RecordsScreen()),
-                  );
-                },
-              ),
+              // Patient records are admin-only.
+              if (context.watch<AuthController>().canOpen(AppPage.records)) ...[
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.folder_shared_outlined),
+                  label: const Text('Go to View Records'),
+                  onPressed: () {
+                    Navigator.pushReplacement(
+                      context,
+                      MaterialPageRoute(builder: (_) => const RecordsScreen()),
+                    );
+                  },
+                ),
+              ],
             ] else ...[
               ElevatedButton.icon(
                 icon: const Icon(Icons.save_outlined),
@@ -372,9 +377,15 @@ class PredictionResultScreen extends StatelessWidget {
                       ),
                     );
                   } catch (e) {
+                    // The raw error can contain every field of the record
+                    // (the SQL statement and its values): log it, don't show it.
+                    debugPrint('Enrolment failed: $e');
                     if (!context.mounted) return;
                     ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Enrolment Error: $e')),
+                      const SnackBar(
+                        content: Text('Could not save this patient record. '
+                            'Please try again.'),
+                      ),
                     );
                   }
                 },

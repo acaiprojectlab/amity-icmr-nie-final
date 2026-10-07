@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../widgets/auth_widgets.dart';
 import '../widgets/logo_header.dart';
 
 class AboutScreen extends StatelessWidget {
@@ -9,6 +10,7 @@ class AboutScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: const Text('About Diagnostic System'),
+        actions: const [AccountButton()],
       ),
       body: SingleChildScrollView(
         child: Column(

@@ -1,6 +1,8 @@
 /// Complete Patient Record Model matching ICMR clinical schema
 library;
 
+import 'dart:convert';
+
 class PatientRecord {
   final int? id; // Local SQLite auto-increment primary key
   final String patientId; // Sequential P001, P002...
@@ -152,18 +154,28 @@ class PatientRecord {
       'doctor_lab_submitted_at': doctorLabSubmittedAt,
       'created_at': createdAt,
       'is_deleted': isDeleted ? 1 : 0,
-      ...symptoms.map((k, v) => MapEntry('sym_$k', v)),
+      // All symptoms in one JSON column ({"fever": 1, ...}); the table has
+      // no per-symptom columns.
+      'symptoms_json': jsonEncode(symptoms),
     };
   }
 
   factory PatientRecord.fromMap(Map<String, dynamic> map) {
     Map<String, int> symptomsMap = {};
-    map.forEach((k, v) {
-      if (k.startsWith('sym_')) {
-        String symKey = k.substring(4);
-        symptomsMap[symKey] = (v as int?) ?? 0;
-      }
-    });
+    final symptomsJson = map['symptoms_json'];
+    if (symptomsJson is String && symptomsJson.isNotEmpty) {
+      (jsonDecode(symptomsJson) as Map<String, dynamic>).forEach((k, v) {
+        symptomsMap[k] = (v as num?)?.toInt() ?? 0;
+      });
+    } else {
+      // Older layout with one sym_<name> column per symptom.
+      map.forEach((k, v) {
+        if (k.startsWith('sym_')) {
+          String symKey = k.substring(4);
+          symptomsMap[symKey] = (v as int?) ?? 0;
+        }
+      });
+    }
 
     return PatientRecord(
       id: map['id'] as int?,

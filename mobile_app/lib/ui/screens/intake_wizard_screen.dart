@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../../providers/app_provider.dart';
 import '../../services/reference_data_service.dart';
+import '../widgets/auth_widgets.dart';
 import '../widgets/symptom_chip_selector.dart';
 import 'prediction_result_screen.dart';
 
@@ -37,6 +38,7 @@ class _IntakeWizardScreenState extends State<IntakeWizardScreen> {
               );
             },
           ),
+          const AccountButton(),
         ],
       ),
       body: Stepper(

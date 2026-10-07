@@ -2,12 +2,17 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../providers/app_provider.dart';
+import '../widgets/auth_widgets.dart';
 import '../widgets/kpi_card.dart';
 import '../widgets/logo_header.dart';
 import 'about_screen.dart';
 
 class HomeScreen extends StatelessWidget {
-  const HomeScreen({super.key});
+  const HomeScreen({super.key, this.showCaseMetrics = false});
+
+  /// Case-status and enrollment KPIs: the admin "Dashboard". Standard users
+  /// get the Home page without them, as on the web.
+  final bool showCaseMetrics;
 
   @override
   Widget build(BuildContext context) {
@@ -31,6 +36,7 @@ class HomeScreen extends StatelessWidget {
               );
             },
           ),
+          const AccountButton(),
         ],
       ),
       body: provider.isInitializing
@@ -138,85 +144,108 @@ class HomeScreen extends StatelessWidget {
 
                               const SizedBox(height: 20),
 
-                              // Section: Patient & DR Status KPIs
-                              const Text(
-                                '📊 Case Status Metrics',
-                                style: TextStyle(
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.bold,
+                              if (!showCaseMetrics) ...[
+                                const Text(
+                                  'This tool analyses a patient’s symptoms, '
+                                  'demographics and location to recommend the '
+                                  'most probable viral infections to test for.',
+                                  style: TextStyle(fontSize: 13.5, height: 1.45),
                                 ),
-                              ),
-                              const SizedBox(height: 10),
-                              GridView.count(
-                                crossAxisCount: 3,
-                                crossAxisSpacing: 8,
-                                mainAxisSpacing: 8,
-                                shrinkWrap: true,
-                                physics: const NeverScrollableScrollPhysics(),
-                                childAspectRatio: 1.05,
-                                children: [
-                                  KpiCard(
-                                    value: metrics.enrolled,
-                                    label: 'Enrolled Records',
-                                    backgroundColor: const Color(0xFF3C8DBC),
-                                    icon: Icons.people_outline,
+                                const SizedBox(height: 10),
+                                const Text(
+                                  'Open the Intake tab to enter patient details '
+                                  'and get a test recommendation.',
+                                  style: TextStyle(
+                                    fontSize: 13.5,
+                                    height: 1.45,
+                                    fontWeight: FontWeight.w600,
+                                    color: Color(0xFF1565C0),
                                   ),
-                                  KpiCard(
-                                    value: metrics.drCompleted,
-                                    label: 'DR Completed',
-                                    backgroundColor: const Color(0xFF00A65A),
-                                    icon: Icons.check_circle_outline,
-                                  ),
-                                  KpiCard(
-                                    value: metrics.drPending,
-                                    label: 'DR Pending',
-                                    backgroundColor: const Color(0xFFDD4B39),
-                                    icon: Icons.pending_outlined,
-                                  ),
-                                ],
-                              ),
-
-                              const SizedBox(height: 16),
-
-                              // Section: Enrollment Trends KPIs
-                              const Text(
-                                '📈 Enrollment Timeline',
-                                style: TextStyle(
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.bold,
                                 ),
-                              ),
-                              const SizedBox(height: 10),
-                              GridView.count(
-                                crossAxisCount: 3,
-                                crossAxisSpacing: 8,
-                                mainAxisSpacing: 8,
-                                shrinkWrap: true,
-                                physics: const NeverScrollableScrollPhysics(),
-                                childAspectRatio: 1.05,
-                                children: [
-                                  KpiCard(
-                                    value: metrics.daily,
-                                    label: 'Enrolled Today',
-                                    backgroundColor: const Color(0xFF00C0EF),
-                                    icon: Icons.today,
-                                  ),
-                                  KpiCard(
-                                    value: metrics.weekly,
-                                    label: 'Last 7 Days',
-                                    backgroundColor: const Color(0xFFF39C12),
-                                    icon: Icons.date_range,
-                                  ),
-                                  KpiCard(
-                                    value: metrics.monthly,
-                                    label: 'Last 30 Days',
-                                    backgroundColor: const Color(0xFF605CA8),
-                                    icon: Icons.calendar_month,
-                                  ),
-                                ],
-                              ),
+                                const SizedBox(height: 20),
+                              ],
 
-                              const SizedBox(height: 20),
+                              if (showCaseMetrics) ...[
+                                // Section: Patient & DR Status KPIs
+                                const Text(
+                                  '📊 Case Status Metrics',
+                                  style: TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                                GridView.count(
+                                  crossAxisCount: 3,
+                                  crossAxisSpacing: 8,
+                                  mainAxisSpacing: 8,
+                                  shrinkWrap: true,
+                                  physics: const NeverScrollableScrollPhysics(),
+                                  childAspectRatio: 1.05,
+                                  children: [
+                                    KpiCard(
+                                      value: metrics.enrolled,
+                                      label: 'Enrolled Records',
+                                      backgroundColor: const Color(0xFF3C8DBC),
+                                      icon: Icons.people_outline,
+                                    ),
+                                    KpiCard(
+                                      value: metrics.drCompleted,
+                                      label: 'DR Completed',
+                                      backgroundColor: const Color(0xFF00A65A),
+                                      icon: Icons.check_circle_outline,
+                                    ),
+                                    KpiCard(
+                                      value: metrics.drPending,
+                                      label: 'DR Pending',
+                                      backgroundColor: const Color(0xFFDD4B39),
+                                      icon: Icons.pending_outlined,
+                                    ),
+                                  ],
+                                ),
+
+                                const SizedBox(height: 16),
+
+                                // Section: Enrollment Trends KPIs
+                                const Text(
+                                  '📈 Enrollment Timeline',
+                                  style: TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                                GridView.count(
+                                  crossAxisCount: 3,
+                                  crossAxisSpacing: 8,
+                                  mainAxisSpacing: 8,
+                                  shrinkWrap: true,
+                                  physics: const NeverScrollableScrollPhysics(),
+                                  childAspectRatio: 1.05,
+                                  children: [
+                                    KpiCard(
+                                      value: metrics.daily,
+                                      label: 'Enrolled Today',
+                                      backgroundColor: const Color(0xFF00C0EF),
+                                      icon: Icons.today,
+                                    ),
+                                    KpiCard(
+                                      value: metrics.weekly,
+                                      label: 'Last 7 Days',
+                                      backgroundColor: const Color(0xFFF39C12),
+                                      icon: Icons.date_range,
+                                    ),
+                                    KpiCard(
+                                      value: metrics.monthly,
+                                      label: 'Last 30 Days',
+                                      backgroundColor: const Color(0xFF605CA8),
+                                      icon: Icons.calendar_month,
+                                    ),
+                                  ],
+                                ),
+
+                                const SizedBox(height: 20),
+                              ],
 
                               // Medical Disclaimer Card
                               Container(

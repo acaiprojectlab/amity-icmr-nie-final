@@ -1,4 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Sign-in talks to Clerk (same accounts as the web app). Release builds
+         don't get this permission automatically; without it sign-in fails. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="amity_icmr_mobile"
         android:name="${applicationName}"

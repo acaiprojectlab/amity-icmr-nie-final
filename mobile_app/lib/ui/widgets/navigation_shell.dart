@@ -1,11 +1,69 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../auth/auth_controller.dart';
+import '../../auth/auth_models.dart';
 import '../../providers/app_provider.dart';
 import '../screens/home_screen.dart';
 import '../screens/intake_wizard_screen.dart';
 import '../screens/records_screen.dart';
 import '../screens/about_screen.dart';
+import 'auth_widgets.dart';
+
+/// One navigation destination; which ones exist depends on the role.
+class _NavTab {
+  const _NavTab({
+    required this.category,
+    required this.icon,
+    required this.label,
+    required this.shortLabel,
+    required this.screen,
+  });
+
+  final String category;
+  final IconData icon;
+  final String label; // desktop sidebar
+  final String shortLabel; // bottom bar
+  final Widget screen;
+}
+
+_NavTab _tabFor(AppPage page) => switch (page) {
+      AppPage.home => const _NavTab(
+          category: 'OVERVIEW',
+          icon: Icons.home_rounded,
+          label: 'Home',
+          shortLabel: 'Home',
+          screen: HomeScreen(showCaseMetrics: false),
+        ),
+      AppPage.dashboard => const _NavTab(
+          category: 'OVERVIEW',
+          icon: Icons.dashboard_rounded,
+          label: 'Dashboard & KPIs',
+          shortLabel: 'Dashboard',
+          screen: HomeScreen(showCaseMetrics: true),
+        ),
+      AppPage.prediction => const _NavTab(
+          category: 'CLINICAL WORKFLOW',
+          icon: Icons.add_circle_outline_rounded,
+          label: 'New Patient Intake',
+          shortLabel: 'Intake',
+          screen: IntakeWizardScreen(),
+        ),
+      AppPage.records => const _NavTab(
+          category: 'DATA MANAGEMENT',
+          icon: Icons.folder_shared_rounded,
+          label: 'Patient Records',
+          shortLabel: 'Records',
+          screen: RecordsScreen(),
+        ),
+      AppPage.about => const _NavTab(
+          category: 'SYSTEM & CONFIG',
+          icon: Icons.info_outline_rounded,
+          label: 'About & Guidelines',
+          shortLabel: 'About',
+          screen: AboutScreen(),
+        ),
+    };
 
 class NavigationShell extends StatefulWidget {
   const NavigationShell({super.key});
@@ -17,16 +75,14 @@ class NavigationShell extends StatefulWidget {
 class _NavigationShellState extends State<NavigationShell> {
   int _selectedIndex = 0;
 
-  final List<Widget> _screens = [
-    const HomeScreen(),
-    const IntakeWizardScreen(),
-    const RecordsScreen(),
-    const AboutScreen(),
-  ];
-
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<AppProvider>();
+    final auth = context.watch<AuthController>();
+    // Only the sections this role may open are built at all (the auth gate
+    // rebuilds this shell whenever the role changes).
+    final tabs = auth.allowedPages.map(_tabFor).toList();
+    final selected = _selectedIndex < tabs.length ? _selectedIndex : 0;
     final isDesktop = MediaQuery.of(context).size.width >= 700;
     const primaryBlue = Color(0xFF1565C0);
     const darkNavy = Color(0xFF0D1B2A);
@@ -68,8 +124,8 @@ class _NavigationShellState extends State<NavigationShell> {
                 ),
               )
             : IndexedStack(
-                index: _selectedIndex,
-                children: _screens,
+                index: selected,
+                children: [for (final tab in tabs) tab.screen],
               );
 
     if (isDesktop) {
@@ -135,39 +191,51 @@ class _NavigationShellState extends State<NavigationShell> {
                     child: ListView(
                       padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
                       children: [
-                        _buildCategoryHeader('OVERVIEW'),
-                        _buildNavItem(
-                          index: 0,
-                          icon: Icons.dashboard_rounded,
-                          label: 'Dashboard & KPIs',
-                        ),
-
-                        const SizedBox(height: 16),
-                        _buildCategoryHeader('CLINICAL WORKFLOW'),
-                        _buildNavItem(
-                          index: 1,
-                          icon: Icons.add_circle_outline_rounded,
-                          label: 'New Patient Intake',
-                        ),
-
-                        const SizedBox(height: 16),
-                        _buildCategoryHeader('DATA MANAGEMENT'),
-                        _buildNavItem(
-                          index: 2,
-                          icon: Icons.folder_shared_rounded,
-                          label: 'Patient Records',
-                        ),
-
-                        const SizedBox(height: 16),
-                        _buildCategoryHeader('SYSTEM & CONFIG'),
-                        _buildNavItem(
-                          index: 3,
-                          icon: Icons.info_outline_rounded,
-                          label: 'About & Guidelines',
-                        ),
+                        for (var i = 0; i < tabs.length; i++) ...[
+                          if (i == 0 || tabs[i].category != tabs[i - 1].category) ...[
+                            if (i > 0) const SizedBox(height: 16),
+                            _buildCategoryHeader(tabs[i].category),
+                          ],
+                          _buildNavItem(
+                            index: i,
+                            selected: selected,
+                            icon: tabs[i].icon,
+                            label: tabs[i].label,
+                          ),
+                        ],
                       ],
                     ),
                   ),
+
+                  // Signed-in identity + role (tap for account options)
+                  if (auth.session case final session?)
+                    Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        onTap: () => showAccountSheet(context),
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 10, 16, 0),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  session.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              RoleBadge(role: session.role),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
 
                   // Footer status badge
                   Container(
@@ -219,7 +287,7 @@ class _NavigationShellState extends State<NavigationShell> {
       return Scaffold(
         body: contentArea,
         bottomNavigationBar: BottomNavigationBar(
-          currentIndex: _selectedIndex,
+          currentIndex: selected,
           onTap: (index) {
             setState(() {
               _selectedIndex = index;
@@ -232,23 +300,12 @@ class _NavigationShellState extends State<NavigationShell> {
           selectedFontSize: 12,
           unselectedFontSize: 11,
           elevation: 8,
-          items: const [
-            BottomNavigationBarItem(
-              icon: Icon(Icons.dashboard_rounded),
-              label: 'Dashboard',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.add_circle_outline_rounded),
-              label: 'Intake',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.folder_shared_rounded),
-              label: 'Records',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.info_outline_rounded),
-              label: 'About',
-            ),
+          items: [
+            for (final tab in tabs)
+              BottomNavigationBarItem(
+                icon: Icon(tab.icon),
+                label: tab.shortLabel,
+              ),
           ],
         ),
       );
@@ -272,10 +329,11 @@ class _NavigationShellState extends State<NavigationShell> {
 
   Widget _buildNavItem({
     required int index,
+    required int selected,
     required IconData icon,
     required String label,
   }) {
-    final isSelected = _selectedIndex == index;
+    final isSelected = selected == index;
     const activeColor = Color(0xFF38BDF8); // Light Blue accent
 
     return Material(
