@@ -6,12 +6,15 @@ import 'package:amity_icmr_mobile/auth/auth_service.dart';
 import 'package:amity_icmr_mobile/main.dart';
 import 'package:amity_icmr_mobile/providers/app_provider.dart';
 import 'package:amity_icmr_mobile/services/reference_data_service.dart';
+import 'package:amity_icmr_mobile/sync/record_syncer.dart';
 import 'package:amity_icmr_mobile/ui/screens/login_screen.dart';
 import 'package:amity_icmr_mobile/ui/screens/records_screen.dart';
 import 'package:amity_icmr_mobile/ui/widgets/auth_widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
+
+import 'support/sync_fakes.dart';
 
 const _user = AuthSession(
   userId: 'user_1',
@@ -93,6 +96,9 @@ class FakeAuthService implements AuthService {
 
   @override
   void dispose() => _changes.close();
+
+  @override
+  Future<String> sessionToken() async => 'test-token';
 
   @override
   Future<AuthStep> signUp({
@@ -187,7 +193,12 @@ Future<FakeAuthService> pumpApp(
     addTearDown(tester.view.reset);
   }
   await tester.pumpWidget(
-    AmityIcmrApp(authService: auth, appProvider: app ?? ReadyAppProvider()),
+    AmityIcmrApp(
+      authService: auth,
+      appProvider: app ?? ReadyAppProvider(),
+      syncStore: EmptySyncStore(),
+      syncApi: FakeSyncApi(),
+    ),
   );
   await tester.pumpAndSettle();
   return auth;
@@ -473,6 +484,14 @@ void main() {
             ChangeNotifierProvider.value(value: auth),
             ChangeNotifierProvider<AppProvider>(
               create: (_) => ReadyAppProvider(),
+            ),
+            ChangeNotifierProvider(
+              create: (_) => RecordSyncer(
+                store: EmptySyncStore(),
+                api: FakeSyncApi(),
+                sessionToken: () async => 'test-token',
+                isSignedIn: () => true,
+              ),
             ),
           ],
           child: const MaterialApp(home: RecordsScreen()),

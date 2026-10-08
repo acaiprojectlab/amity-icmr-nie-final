@@ -8,6 +8,7 @@ import '../models/metadata_models.dart';
 import '../models/patient_record.dart';
 import '../models/prediction_result.dart';
 import '../services/reference_data_service.dart';
+import '../sync/sync_store.dart';
 
 class AppProvider extends ChangeNotifier {
   final ReferenceDataService _refService = ReferenceDataService.instance;
@@ -60,7 +61,11 @@ class AppProvider extends ChangeNotifier {
   // anyone else they are never loaded into memory, and record-changing
   // actions refuse to run.
   String? _accessUserId;
+  String _accessEmail = '';
   bool _canViewRecords = false;
+
+  /// Called after any change that needs uploading (wired to RecordSyncer).
+  VoidCallback? onLocalChange;
 
   // Getters
   bool get isInitializing => _isInitializing;
@@ -162,6 +167,7 @@ class AppProvider extends ChangeNotifier {
   /// previous patient's details.
   void applyAccess(AuthSession? session) {
     final userId = session?.userId;
+    _accessEmail = session?.email ?? '';
     if (userId != _accessUserId) {
       _accessUserId = userId;
       resetForm();
@@ -388,8 +394,12 @@ class AppProvider extends ChangeNotifier {
     final dfFmt = DateFormat('dd-MM-yyyy');
 
     // Generate atomic sequential IDs
-    final patientId = await _db.getNextPatientId();
-    final studyId = await _db.getNextStudyId(_hospital);
+    // Temporary IDs until the record is uploaded; the shared database then
+    // assigns the official ones (P042, M17...) from the web's counters, so
+    // phones and the web never hand out the same number.
+    final patientId = 'TMP-${await _db.getNextPatientId()}';
+    final localStudyId = await _db.getNextStudyId(_hospital);
+    final studyId = localStudyId.isEmpty ? '' : 'TMP-$localStudyId';
 
     final top5 = _currentPrediction!.top5Predictions;
 
@@ -432,55 +442,29 @@ class AppProvider extends ChangeNotifier {
       top5Virus: top5.length > 4 ? top5[4].virusName : '',
       top5Confidence: top5.length > 4 ? top5[4].confidence : 0.0,
       createdAt: DateTime.now().toIso8601String(),
+      clientRecordId: newRecordId(),
+      enrolledBy: _accessEmail,
     );
 
     final insertedId = await _db.insertPatient(record);
-    final savedRecord = PatientRecord(
-      id: insertedId,
-      patientId: record.patientId,
-      patientStudyId: record.patientStudyId,
-      patientMrdId: record.patientMrdId,
-      patientName: record.patientName,
-      hospital: record.hospital,
-      department: record.department,
-      departmentSpecification: record.departmentSpecification,
-      dateOfCollection: record.dateOfCollection,
-      dateOfAdmission: record.dateOfAdmission,
-      mobileNo: record.mobileNo,
-      addressLine: record.addressLine,
-      stateName: record.stateName,
-      stateEncoded: record.stateEncoded,
-      districtName: record.districtName,
-      districtEncoded: record.districtEncoded,
-      subdistrict: record.subdistrict,
-      pinCode: record.pinCode,
-      age: record.age,
-      sex: record.sex,
-      patientType: record.patientType,
-      onsetOfIllness: record.onsetOfIllness,
-      durationOfIllness: record.durationOfIllness,
-      syndromeEncoded: record.syndromeEncoded,
-      syndromeName: record.syndromeName,
-      symptoms: record.symptoms,
-      predictedVirusName: record.predictedVirusName,
-      predictionConfidence: record.predictionConfidence,
-      top1Virus: record.top1Virus,
-      top1Confidence: record.top1Confidence,
-      top2Virus: record.top2Virus,
-      top2Confidence: record.top2Confidence,
-      top3Virus: record.top3Virus,
-      top3Confidence: record.top3Confidence,
-      top4Virus: record.top4Virus,
-      top4Confidence: record.top4Confidence,
-      top5Virus: record.top5Virus,
-      top5Confidence: record.top5Confidence,
-      createdAt: record.createdAt,
-    );
+    final savedRecord = (await _db.getPatientById(insertedId))!;
 
     _lastEnrolledRecord = savedRecord;
     await refreshDashboard();
     notifyListeners();
+    onLocalChange?.call();
     return savedRecord;
+  }
+
+  /// Uploads can replace temporary IDs with official ones: reload what the
+  /// screens show.
+  Future<void> reloadAfterSync() async {
+    final lastId = _lastEnrolledRecord?.id;
+    if (lastId != null) {
+      _lastEnrolledRecord = await _db.getPatientById(lastId) ?? _lastEnrolledRecord;
+    }
+    await refreshDashboard();
+    notifyListeners();
   }
 
   // --- Doctor Recommendation Update ---
@@ -496,6 +480,7 @@ class AppProvider extends ChangeNotifier {
       confirmedPathogen: recommendedPathogens.join(', '),
     );
     await refreshDashboard();
+    onLocalChange?.call();
   }
 
   // --- Soft-Delete Record ---
@@ -503,6 +488,7 @@ class AppProvider extends ChangeNotifier {
     _requireRecordsAccess();
     await _db.softDeletePatient(recordId);
     await refreshDashboard();
+    onLocalChange?.call();
   }
 
   // --- Filter & Search Records ---

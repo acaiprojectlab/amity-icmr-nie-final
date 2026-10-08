@@ -55,5 +55,9 @@ abstract class AuthService {
   /// Always clears the local session, even when offline.
   Future<void> signOut();
 
+  /// A short-lived token (valid about a minute) proving who is signed in,
+  /// for the sync service. Needs a connection.
+  Future<String> sessionToken();
+
   void dispose();
 }

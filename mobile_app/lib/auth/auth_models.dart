@@ -99,6 +99,7 @@ enum AuthErrorKind {
   weakPassword,
   invalidCode,
   unsupported,
+  sessionExpired,
   unknown,
 }
 

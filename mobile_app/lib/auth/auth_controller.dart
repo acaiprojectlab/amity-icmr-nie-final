@@ -255,6 +255,9 @@ class AuthController extends ChangeNotifier {
     _apply(null);
   }
 
+  /// See [AuthService.sessionToken].
+  Future<String> sessionToken() => _service.sessionToken();
+
   @override
   void dispose() {
     _disposed = true;

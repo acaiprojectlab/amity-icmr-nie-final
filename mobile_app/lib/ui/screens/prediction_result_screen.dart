@@ -8,6 +8,7 @@ import '../../providers/app_provider.dart';
 import '../../services/pdf_report_service.dart';
 import '../../services/reference_data_service.dart';
 import '../widgets/probability_chart.dart';
+import '../widgets/sync_status_banner.dart';
 import 'records_screen.dart';
 
 class PredictionResultScreen extends StatelessWidget {
@@ -318,6 +319,14 @@ class PredictionResultScreen extends StatelessWidget {
                             'Status: 🔴 Pending Doctor Recommendation',
                             style: TextStyle(fontSize: 11, color: Colors.red),
                           ),
+                          const SizedBox(height: 4),
+                          RecordSyncChip(record: provider.lastEnrolledRecord!),
+                          if (!provider.lastEnrolledRecord!.synced)
+                            const Text(
+                              'Temporary ID: replaced by the official one '
+                              'once uploaded.',
+                              style: TextStyle(fontSize: 11, color: Colors.black54),
+                            ),
                         ],
                       ),
                     ),
@@ -372,7 +381,8 @@ class PredictionResultScreen extends StatelessWidget {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
                         content: Text(
-                            '✅ Enrolled ${saved.patientId}! Pending Doctor Recommendation.'),
+                            '✅ Enrolled ${saved.patientId}. Saved on this phone; '
+                            'it uploads automatically when online.'),
                         backgroundColor: Colors.green[700],
                       ),
                     );

@@ -10,6 +10,7 @@ import '../../providers/app_provider.dart';
 import '../../services/csv_export_service.dart';
 import '../../services/pdf_report_service.dart';
 import '../widgets/auth_widgets.dart';
+import '../widgets/sync_status_banner.dart';
 import 'update_dr_screen.dart';
 
 class RecordsScreen extends StatefulWidget {
@@ -79,6 +80,11 @@ class _RecordsScreenState extends State<RecordsScreen> {
                 _buildStatusTab('Completed', '🟢 Completed', provider),
               ],
             ),
+          ),
+
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: SyncStatusBanner(),
           ),
 
           // Search Bar
@@ -264,7 +270,9 @@ class _RecordsScreenState extends State<RecordsScreen> {
                 ),
               ],
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 6),
+            RecordSyncChip(record: rec),
+            const SizedBox(height: 8),
 
             // Patient Name & MRD ID
             if (rec.patientName.isNotEmpty) ...[
@@ -345,7 +353,7 @@ class _RecordsScreenState extends State<RecordsScreen> {
       builder: (ctx) => AlertDialog(
         title: const Text('Delete Patient Record?'),
         content: Text(
-          'Are you sure you want to delete ${rec.patientId} (${rec.patientName.isNotEmpty ? rec.patientName : "De-identified"})? It will be removed from your active list.',
+          'Are you sure you want to delete ${rec.patientId} (${rec.patientName.isNotEmpty ? rec.patientName : "De-identified"})? It will be removed from the records list here and, once uploaded, from the website records too. The data is kept in the database and can be restored by an administrator.',
         ),
         actions: [
           TextButton(

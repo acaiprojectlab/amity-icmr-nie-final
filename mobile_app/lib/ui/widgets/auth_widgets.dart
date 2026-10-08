@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../auth/auth_controller.dart';
 import '../../auth/auth_models.dart';
+import '../../sync/record_syncer.dart';
 import '../screens/change_password_screen.dart';
 
 /// "Admin" / "User" pill, same colours as the web app's sidebar badge.
@@ -403,8 +404,13 @@ class _AccountSheet extends StatelessWidget {
               leading: const Icon(Icons.logout, color: Color(0xFFC62828)),
               title: const Text('Sign out',
                   style: TextStyle(color: Color(0xFFC62828))),
-              onTap: () {
-                Navigator.pop(context);
+              onTap: () async {
+                final navigator = Navigator.of(context);
+                final pending = context.read<RecordSyncer>().pending;
+                navigator.pop();
+                if (pending > 0 && !await _confirmSignOut(navigator.context, pending)) {
+                  return;
+                }
                 auth.signOut();
               },
             ),
@@ -413,4 +419,32 @@ class _AccountSheet extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Patients enrolled here stay on the phone until uploaded; make sure
+/// signing out is deliberate when some haven't gone up yet.
+Future<bool> _confirmSignOut(BuildContext context, int pending) async {
+  final plural = pending == 1 ? 'patient has' : 'patients have';
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('Not uploaded yet'),
+      content: Text(
+        '$pending $plural not been uploaded to the shared database yet. '
+        'They stay safely on this phone and upload the next time anyone '
+        'signs in here with an internet connection.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, false),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, true),
+          child: const Text('Sign out'),
+        ),
+      ],
+    ),
+  );
+  return ok == true;
 }

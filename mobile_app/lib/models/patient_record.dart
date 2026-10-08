@@ -52,6 +52,14 @@ class PatientRecord {
   final String createdAt; // ISO timestamp
   final bool isDeleted; // Soft-delete flag
 
+  // Upload to the shared (web) database -- see lib/sync/.
+  final String clientRecordId; // UUID; identifies the record on the server
+  final String enrolledBy; // email of the person who enrolled the patient
+  final bool synced; // on the server; patientId/patientStudyId are official
+  final bool needsSync; // local changes not yet uploaded
+  final int localRev; // bumped on every local change
+  final String? syncError; // why the server refused the last upload
+
   PatientRecord({
     this.id,
     required this.patientId,
@@ -96,6 +104,12 @@ class PatientRecord {
     this.doctorLabSubmittedAt,
     required this.createdAt,
     this.isDeleted = false,
+    this.clientRecordId = '',
+    this.enrolledBy = '',
+    this.synced = false,
+    this.needsSync = false,
+    this.localRev = 0,
+    this.syncError,
   });
 
   bool get isCompleted =>
@@ -154,6 +168,12 @@ class PatientRecord {
       'doctor_lab_submitted_at': doctorLabSubmittedAt,
       'created_at': createdAt,
       'is_deleted': isDeleted ? 1 : 0,
+      'client_record_id': clientRecordId,
+      'enrolled_by': enrolledBy,
+      'synced': synced ? 1 : 0,
+      'needs_sync': needsSync ? 1 : 0,
+      'local_rev': localRev,
+      'sync_error': syncError,
       // All symptoms in one JSON column ({"fever": 1, ...}); the table has
       // no per-symptom columns.
       'symptoms_json': jsonEncode(symptoms),
@@ -223,6 +243,12 @@ class PatientRecord {
       doctorLabSubmittedAt: map['doctor_lab_submitted_at'] as String?,
       createdAt: (map['created_at'] as String?) ?? '',
       isDeleted: ((map['is_deleted'] as int?) ?? 0) == 1,
+      clientRecordId: (map['client_record_id'] as String?) ?? '',
+      enrolledBy: (map['enrolled_by'] as String?) ?? '',
+      synced: ((map['synced'] as int?) ?? 0) == 1,
+      needsSync: ((map['needs_sync'] as int?) ?? 0) == 1,
+      localRev: (map['local_rev'] as int?) ?? 0,
+      syncError: map['sync_error'] as String?,
     );
   }
 }

@@ -60,6 +60,29 @@ check that instance also has the Native API turned on:
 flutter build apk --release --dart-define=CLERK_PUBLISHABLE_KEY=pk_live_xxxxxxxx
 ```
 
+## Uploading to the shared database
+
+Patients are always saved on the phone first, so enrolment works with no
+signal. They are then uploaded to the web app's MongoDB through the sync
+service (`../sync_service`, see its README to deploy it on Render), so they
+appear on the web Dashboard and View Records.
+
+- **When:** right after enrolment, when someone signs in, whenever the app
+  comes back to the screen, and every minute while anything is waiting, as
+  long as the app is open or running in the background. Uploading while the
+  app is fully closed is not included yet (it needs an extra Android
+  component).
+- **IDs:** a new patient gets a temporary ID (`TMP-P001`) on the phone. On
+  upload the shared database assigns the official Patient ID and Study ID
+  from the same counters the web uses, and the phone switches to them. A
+  slip printed before uploading carries the temporary ID.
+- **Status:** Home and Records show "N patients waiting to upload" with an
+  Upload now button; each record shows Uploaded / Waiting to upload.
+- Doctor recommendations and deletions made on the phone by an admin are
+  uploaded too. Records entered on the website don't come down to the phone.
+- The service address is built in (`https://amity-icmr-sync.onrender.com`);
+  use `--dart-define=SYNC_URL=...` if Render gives a different one.
+
 ## Building the APK
 
 ```bash

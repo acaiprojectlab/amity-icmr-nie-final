@@ -5,6 +5,7 @@ import '../../providers/app_provider.dart';
 import '../widgets/auth_widgets.dart';
 import '../widgets/kpi_card.dart';
 import '../widgets/logo_header.dart';
+import '../widgets/sync_status_banner.dart';
 import 'about_screen.dart';
 
 class HomeScreen extends StatelessWidget {
@@ -143,6 +144,8 @@ class HomeScreen extends StatelessWidget {
                               ),
 
                               const SizedBox(height: 20),
+
+                              const SyncStatusBanner(),
 
                               if (!showCaseMetrics) ...[
                                 const Text(

@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:clerk_auth/clerk_auth.dart' as clerk;
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 
 import 'auth_models.dart';
@@ -89,12 +90,18 @@ class ClerkAuthService implements AuthService {
     'create your account on the website, then sign in here.',
   );
 
+  static const _sessionExpired = AuthException(
+    AuthErrorKind.sessionExpired,
+    'Your sign-in has expired. Please sign in again to upload patients.',
+  );
+
   final String _publishableKey;
 
   /// Where the signed-in session is saved (app-private storage).
   final Future<Directory> Function() _storageDirectory;
   final _changes = StreamController<AuthSession?>.broadcast();
   _ClerkAuth? _auth;
+  _FilePersistor? _persistor;
   AuthSession? _last;
 
   _Pending _pending = _Pending.none;
@@ -110,10 +117,11 @@ class ClerkAuthService implements AuthService {
   Future<void> initialize() async {
     if (!_publishableKey.startsWith('pk_')) throw _notConfigured;
     final storageDir = await _storageDirectory();
+    final persistor = _persistor = _FilePersistor(storageDir);
     final auth = _ClerkAuth(
       config: clerk.AuthConfig(
         publishableKey: _publishableKey,
-        persistor: _FilePersistor(storageDir),
+        persistor: persistor,
         // No backend of ours consumes session JWTs, so don't poll for them.
         sessionTokenPolling: false,
         telemetryPeriod: Duration.zero,
@@ -479,6 +487,56 @@ class ClerkAuthService implements AuthService {
     _publish();
   }
 
+  /// Minted straight from Clerk's Frontend API (the same request the SDK
+  /// makes) rather than via the SDK's sessionToken(), which also starts a
+  /// background refresh timer that keeps firing -- and failing -- offline.
+  @override
+  Future<String> sessionToken() async {
+    final auth = _auth;
+    final sessionId = auth?.session?.id;
+    final clientToken = _persistor?.clientToken;
+    if (auth == null || sessionId == null || clientToken == null) {
+      throw _sessionExpired;
+    }
+    final http.Response resp;
+    try {
+      resp = await http.post(
+        Uri.https(_frontendApiHost(_publishableKey),
+            '/v1/client/sessions/$sessionId/tokens', {'_is_native': 'true'}),
+        headers: {
+          'Authorization': clientToken,
+          'Accept': 'application/json',
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'clerk-api-version': clerk.ClerkConstants.clerkApiVersion,
+          'x-mobile': '1',
+        },
+      ).timeout(_requestTimeout);
+    } catch (_) {
+      throw _network;
+    }
+    if (resp.statusCode == 200) {
+      final jwt = (jsonDecode(resp.body) as Map<String, dynamic>)['jwt'];
+      if (jwt is String && jwt.isNotEmpty) return jwt;
+    }
+    if (resp.statusCode == 429) throw _rateLimited;
+    if (resp.statusCode >= 400 && resp.statusCode < 500) {
+      // The session ended on Clerk's side (signed out elsewhere, expired,
+      // revoked): refresh so the app notices and shows the sign-in screen.
+      unawaited(auth.refreshClient().catchError((_) {}));
+      throw _sessionExpired;
+    }
+    throw _network;
+  }
+
+  /// `pk_test_<base64 "host$">` -> host
+  static String _frontendApiHost(String publishableKey) {
+    final encoded = publishableKey.substring(publishableKey.lastIndexOf('_') + 1);
+    return utf8
+        .decode(base64.decode(base64.normalize(encoded)))
+        .split(r'$')
+        .first;
+  }
+
   @override
   void dispose() {
     _auth?.terminate();
@@ -610,6 +668,18 @@ class _FilePersistor implements clerk.Persistor {
 
   @override
   FutureOr<T?> read<T>(String key) => _cache[key] as T?;
+
+  /// The SDK's client token (stored under `_clerkClient_Token_<id>`).
+  String? get clientToken {
+    for (final entry in _cache.entries) {
+      if (entry.key.startsWith('_clerkClient_Token') &&
+          entry.value is String &&
+          (entry.value as String).isNotEmpty) {
+        return entry.value as String;
+      }
+    }
+    return null;
+  }
 
   @override
   FutureOr<void> write<T>(String key, T value) {

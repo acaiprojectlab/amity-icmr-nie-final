@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:amity_icmr_mobile/database/app_database.dart';
 import 'package:amity_icmr_mobile/models/patient_record.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -29,7 +31,7 @@ PatientRecord samplePatient(String patientId) => PatientRecord(
   durationOfIllness: 3,
   syndromeEncoded: 0,
   syndromeName: 'ARI/Influenza Like Illness (ILI)',
-  symptoms: {'fever': 1, 'cough': 1, 'headache': 0},
+  symptoms: {'FEVER': 1, 'COUGH': 1, 'HEADACHE': 0},
   predictedVirusName: 'Influenza A H1N1',
   predictionConfidence: 0.61,
   top1Virus: 'Influenza A H1N1',
@@ -99,6 +101,10 @@ void main() {
     // Real SQLite (desktop build) so the same SQL the phone runs is tested.
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
+    // Own folder per test file: files run in parallel.
+    await databaseFactory.setDatabasesPath(
+      Directory.systemTemp.createTempSync('amity_db_').path,
+    );
     final path = join(await getDatabasesPath(), 'amity_icmr_patients.db');
     await databaseFactory.deleteDatabase(path);
     final old = await databaseFactory.openDatabase(
@@ -108,6 +114,12 @@ void main() {
         onCreate: (db, _) => db.execute(oldPatientsTable),
       ),
     );
+    // A patient saved by an earlier build (before uploading existed).
+    await old.insert('patients', {
+      'patient_id': 'P001',
+      'patient_name': 'Saved Before Upload',
+      'created_at': DateTime(2026, 10, 6).toIso8601String(),
+    });
     await old.close();
   });
 
@@ -116,9 +128,21 @@ void main() {
     final db = AppDatabase.instance;
     await db.insertPatient(samplePatient('P001'));
 
-    final saved = (await db.getPatients()).single;
+    final saved = (await db.getPatients()).firstWhere(
+      (r) => r.patientName == 'Test Patient',
+    );
     expect(saved.patientId, 'P001');
     expect(saved.patientName, 'Test Patient');
-    expect(saved.symptoms, {'fever': 1, 'cough': 1, 'headache': 0});
+    expect(saved.symptoms, {'FEVER': 1, 'COUGH': 1, 'HEADACHE': 0});
+  });
+
+  test('patients saved by an earlier build are queued for upload', () async {
+    final queued = await AppDatabase.instance.getRecordsNeedingSync();
+    final old = queued.firstWhere(
+      (r) => r.patientName == 'Saved Before Upload',
+    );
+    expect(old.clientRecordId, matches(RegExp(r'^[0-9a-f]{8}-[0-9a-f]{4}-4')));
+    expect(old.needsSync, isTrue);
+    expect(old.synced, isFalse);
   });
 }

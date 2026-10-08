@@ -45,6 +45,7 @@ dependencies:
   onnxruntime: ^1.4.1
   clerk_auth: 0.0.18-beta
   path_provider: ^2.1.6
+  http: ^1.6.0
 
 dev_dependencies:
   flutter_test:
